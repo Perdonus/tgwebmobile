@@ -21,8 +21,8 @@ class MediaCacheManager(
     suspend fun cache(fileId: String, mimeType: String, bytes: Long, source: InputStream, isPinned: Boolean = false): String {
         val target = File(cacheDir, "${UUID.randomUUID()}_$fileId.bin")
         val encryptedFile = EncryptedFile.Builder(
-            target,
             appContext,
+            target,
             masterKey,
             EncryptedFile.FileEncryptionScheme.AES256_GCM_HKDF_4KB,
         ).build()
