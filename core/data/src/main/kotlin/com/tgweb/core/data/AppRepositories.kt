@@ -2,6 +2,7 @@ package com.tgweb.core.data
 
 import com.tgweb.core.webbridge.BridgeEvent
 import com.tgweb.core.webbridge.BridgeEventTypes
+import com.tgweb.core.webbridge.ProxyConfigSnapshot
 import com.tgweb.core.webbridge.WebBootstrapSnapshot
 import com.tgweb.core.webbridge.WebBridgeContract
 
@@ -14,6 +15,13 @@ object AppRepositories {
     lateinit var notificationService: NotificationService
     lateinit var webBridge: WebBridgeContract
     lateinit var webBootstrapProvider: suspend () -> WebBootstrapSnapshot
+    lateinit var persistProxyState: suspend (ProxyConfigSnapshot) -> Unit
+
+    @Volatile
+    private var proxyState: ProxyConfigSnapshot = ProxyConfigSnapshot()
+
+    @Volatile
+    private var pushPermissionGranted: Boolean = false
 
     fun postPushMessageReceived(chatId: Long, messageId: Long, preview: String) {
         if (!::webBridge.isInitialized) return
@@ -70,11 +78,52 @@ object AppRepositories {
         )
     }
 
+    suspend fun updateProxyState(state: ProxyConfigSnapshot) {
+        proxyState = state
+        if (::persistProxyState.isInitialized) {
+            persistProxyState(state)
+        }
+        postProxyState(state)
+    }
+
+    fun getProxyState(): ProxyConfigSnapshot = proxyState
+
+    fun postProxyState(state: ProxyConfigSnapshot = proxyState) {
+        if (!::webBridge.isInitialized) return
+        webBridge.postToWeb(
+            BridgeEvent(
+                type = BridgeEventTypes.PROXY_STATE,
+                payload = mapOf(
+                    "enabled" to state.enabled.toString(),
+                    "type" to state.type.name,
+                    "host" to state.host,
+                    "port" to state.port.toString(),
+                    "username" to (state.username ?: ""),
+                    "secret" to (state.secret ?: ""),
+                ),
+            )
+        )
+    }
+
+    fun postPushPermissionState(granted: Boolean) {
+        pushPermissionGranted = granted
+        if (!::webBridge.isInitialized) return
+        webBridge.postToWeb(
+            BridgeEvent(
+                type = BridgeEventTypes.PUSH_PERMISSION_STATE,
+                payload = mapOf("granted" to granted.toString()),
+            )
+        )
+    }
+
+    fun isPushPermissionGranted(): Boolean = pushPermissionGranted
+
     fun isInitialized(): Boolean {
         return ::chatRepository.isInitialized &&
             ::mediaRepository.isInitialized &&
             ::notificationService.isInitialized &&
             ::webBridge.isInitialized &&
-            ::webBootstrapProvider.isInitialized
+            ::webBootstrapProvider.isInitialized &&
+            ::persistProxyState.isInitialized
     }
 }

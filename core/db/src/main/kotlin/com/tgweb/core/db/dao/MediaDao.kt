@@ -14,6 +14,9 @@ interface MediaDao {
     @Query("SELECT * FROM media_files WHERE file_id = :fileId LIMIT 1")
     suspend fun get(fileId: String): MediaFileEntity?
 
+    @Query("UPDATE media_files SET is_pinned = :isPinned WHERE file_id = :fileId")
+    suspend fun setPinned(fileId: String, isPinned: Boolean)
+
     @Query("UPDATE media_files SET last_accessed_at = :timestamp WHERE file_id = :fileId")
     suspend fun touch(fileId: String, timestamp: Long)
 
@@ -23,8 +26,14 @@ interface MediaDao {
     @Query("SELECT * FROM media_files WHERE is_pinned = 0 ORDER BY last_accessed_at ASC")
     suspend fun listForEviction(): List<MediaFileEntity>
 
+    @Query("SELECT * FROM media_files ORDER BY last_accessed_at ASC")
+    suspend fun listAll(): List<MediaFileEntity>
+
     @Query("DELETE FROM media_files WHERE file_id = :fileId")
     suspend fun delete(fileId: String)
+
+    @Query("DELETE FROM media_files")
+    suspend fun deleteAll()
 
     @Query("SELECT COALESCE(SUM(size_bytes), 0) FROM media_files")
     suspend fun totalSize(): Long

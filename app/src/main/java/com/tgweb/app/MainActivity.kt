@@ -1,13 +1,16 @@
 package com.tgweb.app
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.webkit.JavascriptInterface
@@ -18,11 +21,18 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
+import androidx.webkit.ProxyConfig
+import androidx.webkit.ProxyController
+import androidx.webkit.WebViewFeature
 import com.tgweb.core.data.AppRepositories
 import com.tgweb.core.webbridge.BridgeCommand
 import com.tgweb.core.webbridge.BridgeCommandTypes
 import com.tgweb.core.webbridge.BridgeEvent
+import com.tgweb.core.webbridge.ProxyConfigSnapshot
+import com.tgweb.core.webbridge.ProxyType
 import com.tgweb.core.webbridge.WebBootstrapSnapshot
 import kotlinx.coroutines.launch
 import org.json.JSONArray
@@ -30,6 +40,11 @@ import org.json.JSONObject
 
 class MainActivity : ComponentActivity() {
     private lateinit var webView: WebView
+
+    private val notificationPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            AppRepositories.postPushPermissionState(granted)
+        }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -43,6 +58,8 @@ class MainActivity : ComponentActivity() {
         attachBridgeSink()
         loadWebBundle()
         handleLaunchIntent(intent)
+
+        AppRepositories.postPushPermissionState(isPushPermissionGranted())
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -67,6 +84,7 @@ class MainActivity : ComponentActivity() {
         settings.allowFileAccess = true
         settings.allowContentAccess = true
         settings.mediaPlaybackRequiresUserGesture = false
+        settings.setSupportMultipleWindows(false)
 
         webView.webChromeClient = WebChromeClient()
         webView.webViewClient = object : WebViewClient() {
@@ -76,6 +94,7 @@ class MainActivity : ComponentActivity() {
 
             override fun onPageFinished(view: WebView?, url: String?) {
                 injectBootstrap()
+                applyProxyToWebView(AppRepositories.getProxyState())
             }
 
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
@@ -112,9 +131,33 @@ class MainActivity : ComponentActivity() {
             )
         }
 
-        webView.addJavascriptInterface(AndroidBridgeJsApi { command ->
-            AppRepositories.webBridge.onFromWeb(command)
-        }, JS_BRIDGE_NAME)
+        webView.addJavascriptInterface(
+            AndroidBridgeJsApi { command ->
+                when (command.type) {
+                    BridgeCommandTypes.REQUEST_PUSH_PERMISSION -> {
+                        requestNotificationPermission()
+                    }
+                    BridgeCommandTypes.SET_PROXY -> {
+                        val proxyConfig = parseProxyConfig(command.payload)
+                        if (proxyConfig == null) {
+                            AppRepositories.postProxyState()
+                        } else {
+                            lifecycleScope.launch {
+                                AppRepositories.updateProxyState(proxyConfig)
+                                applyProxyToWebView(proxyConfig)
+                            }
+                        }
+                    }
+                    BridgeCommandTypes.GET_PROXY_STATUS -> {
+                        AppRepositories.postProxyState()
+                    }
+                    else -> {
+                        AppRepositories.webBridge.onFromWeb(command)
+                    }
+                }
+            },
+            JS_BRIDGE_NAME,
+        )
     }
 
     private fun attachBridgeSink() {
@@ -126,7 +169,18 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun loadWebBundle() {
-        webView.loadUrl("file:///android_asset/webapp/index.html")
+        if (hasBundledWebK()) {
+            webView.loadUrl(BUNDLED_WEBK_URL)
+            return
+        }
+        webView.loadUrl(REMOTE_WEBK_URL)
+    }
+
+    private fun hasBundledWebK(): Boolean {
+        return runCatching {
+            assets.open("webapp/webk/index.html").use { }
+            true
+        }.getOrDefault(false)
     }
 
     private fun handleLaunchIntent(intent: Intent?) {
@@ -165,6 +219,19 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
+            val messagesJson = JSONArray().apply {
+                snapshot.recentMessages.forEach { message ->
+                    put(
+                        JSONObject()
+                            .put("messageId", message.messageId)
+                            .put("chatId", message.chatId)
+                            .put("text", message.text)
+                            .put("status", message.status)
+                            .put("createdAt", message.createdAt)
+                    )
+                }
+            }
+
             val mediaJson = JSONArray().apply {
                 snapshot.cachedMedia.forEach { media ->
                     put(
@@ -177,11 +244,21 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
+            val proxyJson = JSONObject()
+                .put("enabled", snapshot.proxyState.enabled)
+                .put("type", snapshot.proxyState.type.name)
+                .put("host", snapshot.proxyState.host)
+                .put("port", snapshot.proxyState.port)
+                .put("username", snapshot.proxyState.username ?: "")
+                .put("secret", snapshot.proxyState.secret ?: "")
+
             val bootstrapJson = JSONObject()
                 .put("dialogs", dialogsJson)
+                .put("recentMessages", messagesJson)
                 .put("unread", snapshot.unread)
                 .put("cachedMedia", mediaJson)
                 .put("lastSyncAt", snapshot.lastSyncAt)
+                .put("proxyState", proxyJson)
 
             val quoted = JSONObject.quote(bootstrapJson.toString())
             val script =
@@ -200,6 +277,92 @@ class MainActivity : ComponentActivity() {
         val script =
             "window.dispatchEvent(new CustomEvent('tgweb-native', { detail: JSON.parse($quoted) }));"
         webView.evaluateJavascript(script, null)
+    }
+
+    private fun requestNotificationPermission() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            AppRepositories.postPushPermissionState(true)
+            return
+        }
+
+        val granted = ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.POST_NOTIFICATIONS,
+        ) == PackageManager.PERMISSION_GRANTED
+        if (granted) {
+            AppRepositories.postPushPermissionState(true)
+            return
+        }
+
+        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
+
+    private fun isPushPermissionGranted(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return true
+        return ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.POST_NOTIFICATIONS,
+        ) == PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun parseProxyConfig(payload: Map<String, String>): ProxyConfigSnapshot? {
+        val enabled = payload["enabled"].orEmpty().equals("true", ignoreCase = true)
+        if (!enabled) {
+            return ProxyConfigSnapshot(enabled = false, type = ProxyType.DIRECT)
+        }
+
+        val type = when (payload["type"]?.uppercase()) {
+            ProxyType.HTTP.name -> ProxyType.HTTP
+            ProxyType.SOCKS5.name -> ProxyType.SOCKS5
+            ProxyType.MTPROTO.name -> ProxyType.MTPROTO
+            else -> null
+        } ?: return null
+
+        val host = payload["host"].orEmpty().trim()
+        val port = payload["port"]?.toIntOrNull() ?: 0
+        if (host.isBlank() || port !in 1..65535) return null
+
+        return ProxyConfigSnapshot(
+            enabled = true,
+            type = type,
+            host = host,
+            port = port,
+            username = payload["username"]?.takeIf { it.isNotBlank() },
+            password = payload["password"]?.takeIf { it.isNotBlank() },
+            secret = payload["secret"]?.takeIf { it.isNotBlank() },
+        )
+    }
+
+    private fun applyProxyToWebView(proxyState: ProxyConfigSnapshot) {
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.PROXY_OVERRIDE)) {
+            AppRepositories.postProxyState(proxyState)
+            return
+        }
+        val executor = ContextCompat.getMainExecutor(this)
+
+        if (!proxyState.enabled || proxyState.type == ProxyType.DIRECT || proxyState.type == ProxyType.MTPROTO) {
+            ProxyController.getInstance().clearProxyOverride(
+                executor,
+                {
+                    AppRepositories.postProxyState(proxyState)
+                },
+            )
+            return
+        }
+
+        val scheme = if (proxyState.type == ProxyType.SOCKS5) "socks" else "http"
+        val proxyRule = "$scheme://${proxyState.host}:${proxyState.port}"
+        val proxyConfig = ProxyConfig.Builder()
+            .addProxyRule(proxyRule)
+            .build()
+
+        ProxyController.getInstance().setProxyOverride(
+            proxyConfig,
+            executor,
+            {
+                AppRepositories.postProxyState(proxyState)
+            },
+        )
     }
 
     private fun isNetworkAvailable(): Boolean {
@@ -240,5 +403,7 @@ class MainActivity : ComponentActivity() {
     companion object {
         private const val TAG = "MainActivity"
         private const val JS_BRIDGE_NAME = "AndroidBridge"
+        private const val BUNDLED_WEBK_URL = "file:///android_asset/webapp/webk/index.html"
+        private const val REMOTE_WEBK_URL = "https://web.telegram.org/k/"
     }
 }

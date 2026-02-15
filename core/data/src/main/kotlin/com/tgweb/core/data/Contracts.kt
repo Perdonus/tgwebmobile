@@ -7,6 +7,7 @@ interface ChatRepository {
     fun observeMessages(chatId: Long): Flow<List<MessageItem>>
     suspend fun sendMessage(chatId: Long, draft: String)
     suspend fun markRead(chatId: Long, messageId: Long)
+    suspend fun ingestPushMessage(chatId: Long, messageId: Long, preview: String)
     suspend fun syncNow(reason: String)
 }
 

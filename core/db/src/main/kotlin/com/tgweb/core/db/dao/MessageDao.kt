@@ -12,6 +12,9 @@ interface MessageDao {
     @Query("SELECT * FROM messages WHERE chat_id = :chatId ORDER BY created_at DESC")
     fun observeMessages(chatId: Long): Flow<List<MessageEntity>>
 
+    @Query("SELECT * FROM messages ORDER BY created_at DESC LIMIT :limit")
+    suspend fun listRecentForBootstrap(limit: Int): List<MessageEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAll(messages: List<MessageEntity>)
 

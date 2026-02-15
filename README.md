@@ -1,14 +1,16 @@
-# TGWeb WebView Shell
+# TGWeb Web K Shell
 
-This repository contains a Telegram-Web-style Android client architecture:
-- Web UI runtime in Android `WebView` (bundle in `app/src/main/assets/webapp`)
-- bridge bus between Web and native (`core:webbridge`)
-- native background reliability (FCM + WorkManager + TDLib sync stubs)
-- offline snapshot + encrypted media cache (Room/SQLCipher + EncryptedFile)
-- push backend API with health and delivery metrics (`backend/push`)
+This repository is an Android shell for Telegram Web K with no native chat UI.
+
+Core goals:
+- original Telegram Web K interface in `WebView` only
+- native background reliability (FCM + WorkManager + sync worker)
+- offline snapshot + encrypted media cache
+- bridge layer for downloads, offline state, proxy state, and push events
+- push backend API with delivery metrics (`backend/push`)
 
 ## Modules
-- `app`: Android WebView shell, bridge binding, bootstrap injection
+- `app`: Android WebView-only shell (loads bundled Web K or `https://web.telegram.org/k/`)
 - `core:webbridge`: command/event contracts and in-process bridge bus
 - `core:tdlib`: TDLib abstraction + stub implementation
 - `core:db`: encrypted Room schema and DAO layer
@@ -22,6 +24,8 @@ This repository contains a Telegram-Web-style Android client architecture:
 - Android SDK path expected at `/usr/lib/android-sdk` in this environment.
 - This skeleton uses `StubTdLibGateway`; wire real TDLib JNI integration for production.
 - Add `google-services.json` and production Firebase credentials before release.
+- Put a built Telegram Web K fork at `app/src/main/assets/webapp/webk/index.html` to run fully local/offline.
+- If local Web K bundle is absent, the shell falls back to `https://web.telegram.org/k/`.
 
 ## Colab build notebook
 - Template notebook: `colab/tgwebmobile_colab_build_template.ipynb`

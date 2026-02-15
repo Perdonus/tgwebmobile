@@ -28,11 +28,38 @@ data class CachedMediaSnapshot(
     val sizeBytes: Long,
 )
 
+data class WebMessageSnapshot(
+    val messageId: Long,
+    val chatId: Long,
+    val text: String,
+    val status: String,
+    val createdAt: Long,
+)
+
+enum class ProxyType {
+    HTTP,
+    SOCKS5,
+    MTPROTO,
+    DIRECT,
+}
+
+data class ProxyConfigSnapshot(
+    val enabled: Boolean = false,
+    val type: ProxyType = ProxyType.DIRECT,
+    val host: String = "",
+    val port: Int = 0,
+    val username: String? = null,
+    val password: String? = null,
+    val secret: String? = null,
+)
+
 data class WebBootstrapSnapshot(
     val dialogs: List<WebDialogSnapshot> = emptyList(),
+    val recentMessages: List<WebMessageSnapshot> = emptyList(),
     val unread: Int = 0,
     val cachedMedia: List<CachedMediaSnapshot> = emptyList(),
     val lastSyncAt: Long = 0L,
+    val proxyState: ProxyConfigSnapshot = ProxyConfigSnapshot(),
 )
 
 object BridgeCommandTypes {
@@ -40,6 +67,8 @@ object BridgeCommandTypes {
     const val PIN_MEDIA = "PIN_MEDIA"
     const val GET_OFFLINE_STATUS = "GET_OFFLINE_STATUS"
     const val REQUEST_PUSH_PERMISSION = "REQUEST_PUSH_PERMISSION"
+    const val SET_PROXY = "SET_PROXY"
+    const val GET_PROXY_STATUS = "GET_PROXY_STATUS"
 }
 
 object BridgeEventTypes {
@@ -47,6 +76,8 @@ object BridgeEventTypes {
     const val DOWNLOAD_PROGRESS = "DOWNLOAD_PROGRESS"
     const val NETWORK_STATE = "NETWORK_STATE"
     const val SYNC_STATE = "SYNC_STATE"
+    const val PROXY_STATE = "PROXY_STATE"
+    const val PUSH_PERMISSION_STATE = "PUSH_PERMISSION_STATE"
 }
 
 interface WebBridgeContract {

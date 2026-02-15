@@ -106,6 +106,38 @@ class ChatRepositoryImpl(
         chatDao.upsertAll(listOf(chat.copy(unreadCount = 0)))
     }
 
+    override suspend fun ingestPushMessage(chatId: Long, messageId: Long, preview: String) {
+        val now = System.currentTimeMillis()
+        messageDao.upsertAll(
+            listOf(
+                MessageEntity(
+                    messageId = messageId,
+                    chatId = chatId,
+                    senderUserId = 0L,
+                    text = preview,
+                    status = "received",
+                    createdAt = now,
+                    updatedAt = now,
+                )
+            )
+        )
+
+        val existingChat = chatDao.getChat(chatId)
+        val updatedUnread = (existingChat?.unreadCount ?: 0) + 1
+        chatDao.upsertAll(
+            listOf(
+                ChatEntity(
+                    chatId = chatId,
+                    title = existingChat?.title ?: "Chat $chatId",
+                    unreadCount = updatedUnread,
+                    lastMessagePreview = preview,
+                    lastMessageAt = now,
+                    avatarFileId = existingChat?.avatarFileId,
+                )
+            )
+        )
+    }
+
     override suspend fun syncNow(reason: String) {
         tdLibGateway.synchronize(reason)
         val dialogs = tdLibGateway.fetchDialogs(limit = 200)

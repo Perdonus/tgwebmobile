@@ -3,100 +3,23 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>TGWeb Shell</title>
+  <title>TGWeb Loader</title>
   <style>
-    :root {
-      --bg: #10141c;
-      --card: #1a2433;
-      --text: #e9f0ff;
-      --muted: #95a3b8;
-      --accent: #50a8ff;
-    }
     body {
       margin: 0;
-      font-family: "Segoe UI", "Noto Sans", sans-serif;
-      background: radial-gradient(circle at top, #1f2d45, var(--bg));
-      color: var(--text);
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: #111;
+      color: #e9e9e9;
+      font-family: sans-serif;
     }
-    .wrap { max-width: 920px; margin: 0 auto; padding: 20px; }
-    .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit,minmax(240px,1fr)); }
-    .card { background: var(--card); border-radius: 12px; padding: 14px; }
-    h1 { margin: 0 0 14px; }
-    button {
-      border: 0;
-      border-radius: 8px;
-      padding: 8px 12px;
-      color: white;
-      background: var(--accent);
-      cursor: pointer;
-      margin-right: 8px;
-      margin-top: 8px;
-    }
-    input { width: 100%; padding: 8px; border-radius: 8px; border: 1px solid #2b3a54; background: #0f1622; color: var(--text); }
-    pre { background: #0c121c; color: #cbe0ff; border-radius: 8px; padding: 12px; min-height: 200px; max-height: 380px; overflow: auto; }
-    .muted { color: var(--muted); }
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <h1>TGWeb Android Shell</h1>
-    <p class="muted">Bridge demo for Telegram Web integration. Replace this bundle with a fork of Telegram Web K/Z.</p>
-
-    <div class="grid">
-      <div class="card">
-        <h3>Bridge Commands</h3>
-        <button onclick="sendCmd('GET_OFFLINE_STATUS', {})">Offline Status</button>
-        <button onclick="sendCmd('REQUEST_PUSH_PERMISSION', {})">Push Permission</button>
-        <input id="fileId" placeholder="fileId for DOWNLOAD_MEDIA" />
-        <button onclick="downloadMedia()">Download Media</button>
-      </div>
-      <div class="card">
-        <h3>Bootstrap Snapshot</h3>
-        <div id="snapshotMeta" class="muted">Waiting...</div>
-      </div>
-    </div>
-
-    <div class="card" style="margin-top:12px;">
-      <h3>Native Events</h3>
-      <pre id="events"></pre>
-    </div>
-  </div>
-
+  <div>Opening Telegram Web K…</div>
   <script>
-    const eventsEl = document.getElementById('events');
-    const snapshotMeta = document.getElementById('snapshotMeta');
-
-    function logEvent(event) {
-      eventsEl.textContent = JSON.stringify(event, null, 2) + "\n\n" + eventsEl.textContent;
-    }
-
-    function sendCmd(type, payload) {
-      if (!window.AndroidBridge || !window.AndroidBridge.send) {
-        logEvent({ type: 'BRIDGE_UNAVAILABLE', payload: { type, payload } });
-        return;
-      }
-      window.AndroidBridge.send(JSON.stringify({ type, payload }));
-    }
-
-    function downloadMedia() {
-      const fileId = (document.getElementById('fileId').value || '').trim();
-      if (!fileId) return;
-      sendCmd('DOWNLOAD_MEDIA', {
-        fileId,
-        export: 'true',
-        targetCollection: 'downloads'
-      });
-    }
-
-    window.addEventListener('tgweb-native', (e) => {
-      logEvent(e.detail);
-    });
-
-    window.addEventListener('tgweb-native-bootstrap', (e) => {
-      const data = e.detail || {};
-      snapshotMeta.textContent = `Dialogs: ${(data.dialogs || []).length}, unread: ${data.unread || 0}, media: ${(data.cachedMedia || []).length}`;
-      logEvent({ type: 'BOOTSTRAP', payload: data });
-    });
+    location.replace('https://web.telegram.org/k/');
   </script>
 </body>
 </html>

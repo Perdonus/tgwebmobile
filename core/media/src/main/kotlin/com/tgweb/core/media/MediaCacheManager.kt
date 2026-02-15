@@ -6,6 +6,7 @@ import androidx.security.crypto.MasterKey
 import com.tgweb.core.db.dao.MediaDao
 import com.tgweb.core.db.entity.MediaFileEntity
 import java.io.File
+import java.io.FileOutputStream
 import java.io.InputStream
 import java.util.UUID
 
@@ -16,18 +17,21 @@ class MediaCacheManager(
 ) {
     private val appContext = context.applicationContext
     private val cacheDir = File(context.filesDir, "media_cache").apply { mkdirs() }
-    private val masterKey = MasterKey.Builder(appContext).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build()
+    private val masterKeyAlias = MasterKey.Builder(appContext)
+        .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+        .build()
+        .keyAlias
 
     suspend fun cache(fileId: String, mimeType: String, bytes: Long, source: InputStream, isPinned: Boolean = false): String {
         val target = File(cacheDir, "${UUID.randomUUID()}_$fileId.bin")
         val encryptedFile = EncryptedFile.Builder(
-            appContext,
             target,
-            masterKey,
+            appContext,
+            masterKeyAlias,
             EncryptedFile.FileEncryptionScheme.AES256_GCM_HKDF_4KB,
         ).build()
 
-        encryptedFile.openFileOutput().use { output ->
+        encryptedFile.openFileOutput().use { output: FileOutputStream ->
             source.copyTo(output)
         }
 
@@ -52,9 +56,13 @@ class MediaCacheManager(
         return media.localPath
     }
 
+    suspend fun pin(fileId: String, isPinned: Boolean = true) {
+        mediaDao.setPinned(fileId = fileId, isPinned = isPinned)
+    }
+
     suspend fun clearAll() {
         cacheDir.listFiles()?.forEach { it.delete() }
-        mediaDao.listForEviction().forEach { mediaDao.delete(it.fileId) }
+        mediaDao.deleteAll()
     }
 
     private suspend fun evictIfNeeded() {
