@@ -15,6 +15,9 @@ interface ChatDao {
     @Query("SELECT * FROM chats WHERE chat_id = :chatId LIMIT 1")
     suspend fun getChat(chatId: Long): ChatEntity?
 
+    @Query("SELECT * FROM chats ORDER BY last_message_at DESC LIMIT :limit")
+    suspend fun listForBootstrap(limit: Int): List<ChatEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAll(chats: List<ChatEntity>)
 }

@@ -17,6 +17,9 @@ interface MediaDao {
     @Query("UPDATE media_files SET last_accessed_at = :timestamp WHERE file_id = :fileId")
     suspend fun touch(fileId: String, timestamp: Long)
 
+    @Query("SELECT * FROM media_files ORDER BY last_accessed_at DESC LIMIT :limit")
+    suspend fun listRecent(limit: Int): List<MediaFileEntity>
+
     @Query("SELECT * FROM media_files WHERE is_pinned = 0 ORDER BY last_accessed_at ASC")
     suspend fun listForEviction(): List<MediaFileEntity>
 

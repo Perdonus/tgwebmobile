@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TGWeb Offline</title>
+  <style>
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      font-family: "Segoe UI", "Noto Sans", sans-serif;
+      color: #e9f0ff;
+      background: linear-gradient(180deg, #121a26, #0a0f17);
+    }
+    .box {
+      max-width: 420px;
+      background: #162133;
+      border-radius: 12px;
+      padding: 18px;
+      text-align: center;
+    }
+    button {
+      margin-top: 12px;
+      padding: 8px 14px;
+      border: 0;
+      border-radius: 8px;
+      background: #4fa8ff;
+      color: white;
+    }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <h2>Offline Mode</h2>
+    <p>Network unavailable. Cached dialogs/media remain available through the web bundle.</p>
+    <button onclick="location.href='file:///android_asset/webapp/index.html'">Try again</button>
+  </div>
+</body>
+</html>

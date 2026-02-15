@@ -16,6 +16,7 @@ import io.ktor.server.routing.routing
 import kotlinx.serialization.Serializable
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 
 @Serializable
 data class DeviceRegistration(
@@ -39,8 +40,20 @@ data class PushAck(
     val deliveredAtEpochMs: Long,
 )
 
+@Serializable
+data class PushMetricEvent(
+    val type: String,
+    val reason: String? = null,
+)
+
 private val devices = ConcurrentHashMap<String, DeviceRegistration>()
 private val acks = ConcurrentHashMap<String, PushAck>()
+private val pushSent = AtomicLong(0)
+private val pushDelivered = AtomicLong(0)
+private val pushOpened = AtomicLong(0)
+private val pushRetried = AtomicLong(0)
+private val pushFailed = AtomicLong(0)
+private val failureReasons = ConcurrentHashMap<String, AtomicLong>()
 
 fun main() {
     embeddedServer(Netty, port = 8080, host = "0.0.0.0", module = Application::module).start(wait = true)
@@ -67,7 +80,23 @@ fun Application.module() {
         post("/v1/push/ack") {
             val body = call.receive<PushAck>()
             acks[body.messageId] = body
+            pushDelivered.incrementAndGet()
             call.respond(HttpStatusCode.OK, mapOf("status" to "acknowledged", "message_id" to body.messageId))
+        }
+
+        post("/v1/push/metric") {
+            val body = call.receive<PushMetricEvent>()
+            when (body.type.lowercase()) {
+                "sent" -> pushSent.incrementAndGet()
+                "opened" -> pushOpened.incrementAndGet()
+                "retried" -> pushRetried.incrementAndGet()
+                "failed" -> {
+                    pushFailed.incrementAndGet()
+                    val reason = body.reason ?: "unknown"
+                    failureReasons.computeIfAbsent(reason) { AtomicLong(0) }.incrementAndGet()
+                }
+            }
+            call.respond(HttpStatusCode.OK, mapOf("status" to "recorded"))
         }
 
         get("/v1/push/health") {
@@ -78,6 +107,20 @@ fun Application.module() {
                     "time" to Instant.now().toString(),
                     "registered_devices" to devices.size,
                     "acks" to acks.size,
+                )
+            )
+        }
+
+        get("/v1/push/metrics") {
+            call.respond(
+                HttpStatusCode.OK,
+                mapOf(
+                    "push_sent" to pushSent.get(),
+                    "push_delivered" to pushDelivered.get(),
+                    "push_opened" to pushOpened.get(),
+                    "push_retried" to pushRetried.get(),
+                    "push_failed" to pushFailed.get(),
+                    "failure_reasons" to failureReasons.mapValues { it.value.get() },
                 )
             )
         }

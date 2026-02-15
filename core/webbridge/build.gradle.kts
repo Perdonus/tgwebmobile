@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "com.tgweb.core.data"
+    namespace = "com.tgweb.core.webbridge"
     compileSdk = 34
 
     defaultConfig {
@@ -23,9 +23,5 @@ android {
 }
 
 dependencies {
-    api(project(":core:webbridge"))
-    implementation(project(":core:db"))
-    implementation(project(":core:tdlib"))
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+    implementation("androidx.core:core-ktx:1.13.1")
 }

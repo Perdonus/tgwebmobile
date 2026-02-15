@@ -1,150 +1,242 @@
 package com.tgweb.app
 
+import android.annotation.SuppressLint
+import android.content.Context
+import android.content.Intent
+import android.graphics.Bitmap
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.net.Uri
 import android.os.Bundle
+import android.util.Log
+import android.webkit.JavascriptInterface
+import android.webkit.URLUtil
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableLongStateOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
-import androidx.lifecycle.ViewModel
-import androidx.lifecycle.ViewModelProvider
-import androidx.lifecycle.viewModelScope
-import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.lifecycleScope
 import com.tgweb.core.data.AppRepositories
-import com.tgweb.core.data.ChatRepository
-import com.tgweb.core.data.ChatSummary
-import com.tgweb.core.data.MessageItem
-import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.stateIn
+import com.tgweb.core.webbridge.BridgeCommand
+import com.tgweb.core.webbridge.BridgeCommandTypes
+import com.tgweb.core.webbridge.BridgeEvent
+import com.tgweb.core.webbridge.WebBootstrapSnapshot
 import kotlinx.coroutines.launch
+import org.json.JSONArray
+import org.json.JSONObject
 
 class MainActivity : ComponentActivity() {
+    private lateinit var webView: WebView
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent {
-            MaterialTheme {
-                TGWebScreen()
+        WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG)
+
+        webView = WebView(this)
+        setContentView(webView)
+
+        configureWebView()
+        attachBridgeSink()
+        loadWebBundle()
+        handleLaunchIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleLaunchIntent(intent)
+    }
+
+    override fun onDestroy() {
+        AppRepositories.webBridge.setWebEventSink(null)
+        webView.removeJavascriptInterface(JS_BRIDGE_NAME)
+        webView.destroy()
+        super.onDestroy()
+    }
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun configureWebView() {
+        val settings = webView.settings
+        settings.javaScriptEnabled = true
+        settings.domStorageEnabled = true
+        settings.databaseEnabled = true
+        settings.allowFileAccess = true
+        settings.allowContentAccess = true
+        settings.mediaPlaybackRequiresUserGesture = false
+
+        webView.webChromeClient = WebChromeClient()
+        webView.webViewClient = object : WebViewClient() {
+            override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                AppRepositories.postNetworkState(isNetworkAvailable())
+            }
+
+            override fun onPageFinished(view: WebView?, url: String?) {
+                injectBootstrap()
+            }
+
+            override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                val uri = request?.url ?: return false
+                if (uri.scheme == "tgweb" && uri.host == "auth") {
+                    handleAuthHandoff(uri)
+                    return true
+                }
+                return false
+            }
+
+            override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
+                if (!isNetworkAvailable() && request?.isForMainFrame == true) {
+                    return WebResourceResponse("text/html", "UTF-8", assets.open("webapp/offline.html"))
+                }
+                return super.shouldInterceptRequest(view, request)
+            }
+        }
+
+        webView.setDownloadListener { url, _, contentDisposition, mimeType, _ ->
+            val fileName = URLUtil.guessFileName(url, contentDisposition, mimeType)
+            AppRepositories.webBridge.onFromWeb(
+                BridgeCommand(
+                    type = BridgeCommandTypes.DOWNLOAD_MEDIA,
+                    payload = mapOf(
+                        "fileId" to url.hashCode().toString(),
+                        "url" to url,
+                        "mime" to (mimeType ?: "application/octet-stream"),
+                        "name" to fileName,
+                        "export" to "true",
+                        "targetCollection" to "downloads",
+                    ),
+                )
+            )
+        }
+
+        webView.addJavascriptInterface(AndroidBridgeJsApi { command ->
+            AppRepositories.webBridge.onFromWeb(command)
+        }, JS_BRIDGE_NAME)
+    }
+
+    private fun attachBridgeSink() {
+        AppRepositories.webBridge.setWebEventSink { event ->
+            runOnUiThread {
+                emitBridgeEvent(event)
             }
         }
     }
-}
 
-class MainViewModel(
-    private val repository: ChatRepository,
-) : ViewModel() {
-    val dialogs: StateFlow<List<ChatSummary>> = repository.observeDialogList()
-        .stateIn(
-            scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5_000),
-            initialValue = emptyList(),
-        )
-
-    fun messages(chatId: Long): StateFlow<List<MessageItem>> = repository.observeMessages(chatId)
-        .stateIn(
-            scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5_000),
-            initialValue = emptyList(),
-        )
-
-    fun sync() = viewModelScope.launch { repository.syncNow("manual") }
-
-    fun send(chatId: Long, text: String) = viewModelScope.launch {
-        repository.sendMessage(chatId, text)
+    private fun loadWebBundle() {
+        webView.loadUrl("file:///android_asset/webapp/index.html")
     }
-}
 
-private class MainViewModelFactory : ViewModelProvider.Factory {
-    override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        @Suppress("UNCHECKED_CAST")
-        return MainViewModel(AppRepositories.chatRepository) as T
+    private fun handleLaunchIntent(intent: Intent?) {
+        val chatId = intent?.getLongExtra("chat_id", 0L) ?: 0L
+        val messageId = intent?.getLongExtra("message_id", 0L) ?: 0L
+        val preview = intent?.getStringExtra("preview").orEmpty()
+        if (chatId > 0L) {
+            AppRepositories.postPushMessageReceived(chatId = chatId, messageId = messageId, preview = preview)
+        }
     }
-}
 
-@Composable
-private fun TGWebScreen(
-    vm: MainViewModel = viewModel(factory = MainViewModelFactory()),
-) {
-    val dialogs by vm.dialogs.collectAsState()
-    var selectedChatId by rememberSaveable { mutableLongStateOf(1001L) }
-    var draft by remember { mutableStateOf("Hello from offline queue") }
-    val messages by vm.messages(selectedChatId).collectAsState()
-    val scope = rememberCoroutineScope()
+    private fun handleAuthHandoff(uri: Uri) {
+        val token = uri.getQueryParameter("token").orEmpty()
+        if (token.isBlank()) return
+        AppRepositories.postSyncState(lastSyncAt = System.currentTimeMillis(), unreadCount = 0)
+    }
 
-    Scaffold(
-        topBar = {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Text("TGWeb Android", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                Button(onClick = { scope.launch { vm.sync() } }) {
-                    Text("Sync")
+    private fun injectBootstrap() {
+        lifecycleScope.launch {
+            val snapshot = runCatching { AppRepositories.webBootstrapProvider() }
+                .getOrElse {
+                    Log.w(TAG, "Unable to load bootstrap snapshot", it)
+                    WebBootstrapSnapshot()
+                }
+
+            val dialogsJson = JSONArray().apply {
+                snapshot.dialogs.forEach { dialog ->
+                    put(
+                        JSONObject()
+                            .put("chatId", dialog.chatId)
+                            .put("title", dialog.title)
+                            .put("lastMessagePreview", dialog.lastMessagePreview)
+                            .put("unreadCount", dialog.unreadCount)
+                            .put("lastMessageAt", dialog.lastMessageAt)
+                    )
                 }
             }
+
+            val mediaJson = JSONArray().apply {
+                snapshot.cachedMedia.forEach { media ->
+                    put(
+                        JSONObject()
+                            .put("fileId", media.fileId)
+                            .put("localPath", media.localPath)
+                            .put("mimeType", media.mimeType)
+                            .put("sizeBytes", media.sizeBytes)
+                    )
+                }
+            }
+
+            val bootstrapJson = JSONObject()
+                .put("dialogs", dialogsJson)
+                .put("unread", snapshot.unread)
+                .put("cachedMedia", mediaJson)
+                .put("lastSyncAt", snapshot.lastSyncAt)
+
+            val quoted = JSONObject.quote(bootstrapJson.toString())
+            val script =
+                "window.__TGWEB_BOOTSTRAP__ = JSON.parse($quoted);" +
+                    "window.dispatchEvent(new CustomEvent('tgweb-native-bootstrap', { detail: window.__TGWEB_BOOTSTRAP__ }));"
+
+            webView.evaluateJavascript(script, null)
         }
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Text("Dialogs", style = MaterialTheme.typography.titleMedium)
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f, fill = false)) {
-                items(dialogs, key = { it.chatId }) { dialog ->
-                    Card(onClick = { selectedChatId = dialog.chatId }, modifier = Modifier.fillMaxWidth()) {
-                        Column(modifier = Modifier.padding(12.dp)) {
-                            Text(dialog.title, fontWeight = FontWeight.SemiBold)
-                            Text(dialog.lastMessagePreview)
-                            if (dialog.unreadCount > 0) {
-                                Text("Unread: ${dialog.unreadCount}", style = MaterialTheme.typography.labelMedium)
-                            }
-                        }
+    }
+
+    private fun emitBridgeEvent(event: BridgeEvent) {
+        val eventJson = JSONObject()
+            .put("type", event.type)
+            .put("payload", JSONObject(event.payload))
+        val quoted = JSONObject.quote(eventJson.toString())
+        val script =
+            "window.dispatchEvent(new CustomEvent('tgweb-native', { detail: JSON.parse($quoted) }));"
+        webView.evaluateJavascript(script, null)
+    }
+
+    private fun isNetworkAvailable(): Boolean {
+        val manager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val network = manager.activeNetwork ?: return false
+        val capabilities = manager.getNetworkCapabilities(network) ?: return false
+        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+    }
+
+    private class AndroidBridgeJsApi(
+        private val commandConsumer: (BridgeCommand) -> Unit,
+    ) {
+        @JavascriptInterface
+        fun send(payloadJson: String) {
+            runCatching {
+                val root = JSONObject(payloadJson)
+                val type = root.optString("type")
+                if (type.isBlank()) return
+
+                val payload = mutableMapOf<String, String>()
+                val payloadObj = root.optJSONObject("payload")
+                if (payloadObj != null) {
+                    val keys = payloadObj.keys()
+                    while (keys.hasNext()) {
+                        val key = keys.next()
+                        payload[key] = payloadObj.opt(key)?.toString().orEmpty()
                     }
                 }
-            }
 
-            Text("Messages: $selectedChatId", style = MaterialTheme.typography.titleMedium)
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f)) {
-                items(messages, key = { it.messageId }) { msg ->
-                    Card(modifier = Modifier.fillMaxWidth()) {
-                        Column(modifier = Modifier.padding(12.dp)) {
-                            Text(msg.text)
-                            Text("${msg.status} • ${msg.createdAt}", style = MaterialTheme.typography.labelSmall)
-                        }
-                    }
-                }
-            }
-
-            Button(onClick = { scope.launch { vm.send(selectedChatId, draft) } }, modifier = Modifier.fillMaxWidth()) {
-                Text("Send test message")
+                commandConsumer(BridgeCommand(type = type, payload = payload))
+            }.onFailure {
+                Log.w(TAG, "Malformed bridge command: $payloadJson", it)
             }
         }
+    }
+
+    companion object {
+        private const val TAG = "MainActivity"
+        private const val JS_BRIDGE_NAME = "AndroidBridge"
     }
 }

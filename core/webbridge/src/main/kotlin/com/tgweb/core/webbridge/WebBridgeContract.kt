@@ -1,0 +1,97 @@
+package com.tgweb.core.webbridge
+
+import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.CopyOnWriteArrayList
+
+data class BridgeCommand(
+    val type: String,
+    val payload: Map<String, String> = emptyMap(),
+)
+
+data class BridgeEvent(
+    val type: String,
+    val payload: Map<String, String> = emptyMap(),
+)
+
+data class WebDialogSnapshot(
+    val chatId: Long,
+    val title: String,
+    val lastMessagePreview: String,
+    val unreadCount: Int,
+    val lastMessageAt: Long,
+)
+
+data class CachedMediaSnapshot(
+    val fileId: String,
+    val localPath: String,
+    val mimeType: String,
+    val sizeBytes: Long,
+)
+
+data class WebBootstrapSnapshot(
+    val dialogs: List<WebDialogSnapshot> = emptyList(),
+    val unread: Int = 0,
+    val cachedMedia: List<CachedMediaSnapshot> = emptyList(),
+    val lastSyncAt: Long = 0L,
+)
+
+object BridgeCommandTypes {
+    const val DOWNLOAD_MEDIA = "DOWNLOAD_MEDIA"
+    const val PIN_MEDIA = "PIN_MEDIA"
+    const val GET_OFFLINE_STATUS = "GET_OFFLINE_STATUS"
+    const val REQUEST_PUSH_PERMISSION = "REQUEST_PUSH_PERMISSION"
+}
+
+object BridgeEventTypes {
+    const val PUSH_MESSAGE_RECEIVED = "PUSH_MESSAGE_RECEIVED"
+    const val DOWNLOAD_PROGRESS = "DOWNLOAD_PROGRESS"
+    const val NETWORK_STATE = "NETWORK_STATE"
+    const val SYNC_STATE = "SYNC_STATE"
+}
+
+interface WebBridgeContract {
+    fun postToWeb(event: BridgeEvent)
+    fun onFromWeb(command: BridgeCommand)
+    fun registerCommandHandler(handler: (BridgeCommand) -> Unit)
+    fun clearCommandHandlers()
+    fun setWebEventSink(sink: ((BridgeEvent) -> Unit)?)
+}
+
+class WebBridgeBus : WebBridgeContract {
+    private val commandHandlers = CopyOnWriteArrayList<(BridgeCommand) -> Unit>()
+    private val pendingEvents = ConcurrentLinkedQueue<BridgeEvent>()
+
+    @Volatile
+    private var webEventSink: ((BridgeEvent) -> Unit)? = null
+
+    override fun postToWeb(event: BridgeEvent) {
+        val sink = webEventSink
+        if (sink == null) {
+            pendingEvents.add(event)
+            return
+        }
+        sink(event)
+    }
+
+    override fun onFromWeb(command: BridgeCommand) {
+        commandHandlers.forEach { it(command) }
+    }
+
+    override fun registerCommandHandler(handler: (BridgeCommand) -> Unit) {
+        commandHandlers.add(handler)
+    }
+
+    override fun clearCommandHandlers() {
+        commandHandlers.clear()
+    }
+
+    override fun setWebEventSink(sink: ((BridgeEvent) -> Unit)?) {
+        webEventSink = sink
+        if (sink == null) return
+
+        while (true) {
+            val event = pendingEvents.poll() ?: break
+            sink(event)
+        }
+    }
+}

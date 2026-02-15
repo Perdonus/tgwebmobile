@@ -4,6 +4,7 @@ import android.content.ContentValues
 import android.content.Context
 import android.os.Environment
 import android.provider.MediaStore
+import com.tgweb.core.data.AppRepositories
 import com.tgweb.core.data.MediaRepository
 import java.io.File
 
@@ -14,7 +15,10 @@ class MediaRepositoryImpl(
 
     override suspend fun getMediaFile(fileId: String): Result<String> {
         val path = cacheManager.resolve(fileId)
-            ?: return Result.failure(IllegalStateException("No cached media for $fileId"))
+            ?: return Result.failure(IllegalStateException("No cached media for $fileId")).also {
+                AppRepositories.postDownloadProgress(fileId = fileId, percent = 0, error = "cache_miss")
+            }
+        AppRepositories.postDownloadProgress(fileId = fileId, percent = 100, localUri = path)
         return Result.success(path)
     }
 
@@ -23,6 +27,7 @@ class MediaRepositoryImpl(
     }
 
     override suspend fun downloadToPublicStorage(fileId: String, targetCollection: String): Result<String> {
+        AppRepositories.postDownloadProgress(fileId = fileId, percent = 0)
         val path = cacheManager.resolve(fileId)
             ?: return Result.failure(IllegalStateException("No cached media for $fileId"))
         val source = File(path)
@@ -48,6 +53,7 @@ class MediaRepositoryImpl(
         values.put(MediaStore.MediaColumns.IS_PENDING, 0)
         context.contentResolver.update(uri, values, null, null)
 
+        AppRepositories.postDownloadProgress(fileId = fileId, percent = 100, localUri = uri.toString())
         return Result.success(uri.toString())
     }
 

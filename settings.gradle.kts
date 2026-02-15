@@ -18,6 +18,7 @@ rootProject.name = "tgweb"
 
 include(":app")
 include(":core:tdlib")
+include(":core:webbridge")
 include(":core:db")
 include(":core:data")
 include(":core:media")

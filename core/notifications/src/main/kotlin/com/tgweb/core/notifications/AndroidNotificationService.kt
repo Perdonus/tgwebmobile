@@ -8,6 +8,7 @@ import android.content.Intent
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import com.tgweb.core.data.AppRepositories
 import com.tgweb.core.data.MessageItem
 import com.tgweb.core.data.NotificationService
 
@@ -22,10 +23,12 @@ class AndroidNotificationService(
     override suspend fun handlePush(payload: Map<String, String>) {
         val chatId = payload["chat_id"]?.toLongOrNull() ?: 0L
         val text = payload["text"].orEmpty()
+        val messageId = payload["message_id"]?.toLongOrNull() ?: System.currentTimeMillis()
         if (chatId != 0L && text.isNotBlank()) {
+            AppRepositories.postPushMessageReceived(chatId = chatId, messageId = messageId, preview = text)
             showMessageNotification(
                 MessageItem(
-                    messageId = System.currentTimeMillis(),
+                    messageId = messageId,
                     chatId = chatId,
                     senderUserId = 0L,
                     text = text,
@@ -38,7 +41,12 @@ class AndroidNotificationService(
 
     override fun showMessageNotification(event: MessageItem) {
         ensureChannels()
-        val intent = Intent(context, Class.forName("com.tgweb.app.MainActivity"))
+        val intent = Intent(context, Class.forName("com.tgweb.app.MainActivity")).apply {
+            putExtra("chat_id", event.chatId)
+            putExtra("message_id", event.messageId)
+            putExtra("preview", event.text)
+            addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        }
         val pendingIntent = PendingIntent.getActivity(
             context,
             event.chatId.toInt(),

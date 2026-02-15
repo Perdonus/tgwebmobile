@@ -1,14 +1,15 @@
-# TGWeb Android Native Client Skeleton
+# TGWeb WebView Shell
 
-This repository now contains a multi-module Android-first client skeleton targeting Telegram parity for:
-- chat sync pipeline
-- push notifications (FCM service hook + background sync worker)
-- offline message storage (Room + SQLCipher)
-- media caching scaffold (EncryptedFile + LRU eviction placeholder)
-- basic push backend API (`backend/push`)
+This repository contains a Telegram-Web-style Android client architecture:
+- Web UI runtime in Android `WebView` (bundle in `app/src/main/assets/webapp`)
+- bridge bus between Web and native (`core:webbridge`)
+- native background reliability (FCM + WorkManager + TDLib sync stubs)
+- offline snapshot + encrypted media cache (Room/SQLCipher + EncryptedFile)
+- push backend API with health and delivery metrics (`backend/push`)
 
 ## Modules
-- `app`: Android UI shell (Compose), startup wiring, periodic sync scheduling
+- `app`: Android WebView shell, bridge binding, bootstrap injection
+- `core:webbridge`: command/event contracts and in-process bridge bus
 - `core:tdlib`: TDLib abstraction + stub implementation
 - `core:db`: encrypted Room schema and DAO layer
 - `core:data`: repository contracts + chat repository implementation

@@ -120,6 +120,10 @@ class ChatRepositoryImpl(
                 )
             }
         )
+        AppRepositories.postSyncState(
+            lastSyncAt = System.currentTimeMillis(),
+            unreadCount = dialogs.sumOf { it.unreadCount },
+        )
         syncStateDao.upsert(
             SyncStateEntity(
                 key = "last_sync",
