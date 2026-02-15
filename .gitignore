@@ -1,0 +1,23 @@
+# Gradle / Android
+.gradle/
+**/build/
+local.properties
+captures/
+.externalNativeBuild/
+.cxx/
+
+# IDE
+.idea/
+*.iml
+
+# OS
+.DS_Store
+
+# Secrets and local artifacts
+*.jks
+*.keystore
+keystore.properties
+google-services.json
+
+# Colab local runtime notebook (use template instead)
+colab/tgwebmobile_colab_build.ipynb
