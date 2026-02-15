@@ -15,9 +15,10 @@ class MediaRepositoryImpl(
 
     override suspend fun getMediaFile(fileId: String): Result<String> {
         val path = cacheManager.resolve(fileId)
-            ?: return Result.failure(IllegalStateException("No cached media for $fileId")).also {
-                AppRepositories.postDownloadProgress(fileId = fileId, percent = 0, error = "cache_miss")
-            }
+        if (path == null) {
+            AppRepositories.postDownloadProgress(fileId = fileId, percent = 0, error = "cache_miss")
+            return Result.failure(IllegalStateException("No cached media for $fileId"))
+        }
         AppRepositories.postDownloadProgress(fileId = fileId, percent = 100, localUri = path)
         return Result.success(path)
     }
