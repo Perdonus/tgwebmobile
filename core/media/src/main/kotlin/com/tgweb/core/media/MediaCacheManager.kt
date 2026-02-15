@@ -17,10 +17,13 @@ class MediaCacheManager(
 ) {
     private val appContext = context.applicationContext
     private val cacheDir = File(context.filesDir, "media_cache").apply { mkdirs() }
-    private val masterKeyAlias = MasterKey.Builder(appContext)
-        .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-        .build()
-        .keyAlias
+    private val masterKeyAlias = MasterKey.DEFAULT_MASTER_KEY_ALIAS
+
+    init {
+        MasterKey.Builder(appContext, masterKeyAlias)
+            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+            .build()
+    }
 
     suspend fun cache(fileId: String, mimeType: String, bytes: Long, source: InputStream, isPinned: Boolean = false): String {
         val target = File(cacheDir, "${UUID.randomUUID()}_$fileId.bin")
