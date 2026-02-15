@@ -152,9 +152,17 @@ class MainApplication : Application() {
                 ?.let(::proxyFromJson)
                 ?: ProxyConfigSnapshot()
             AppRepositories.updateProxyState(persistedProxy)
+            AppRepositories.postInterfaceScaleState(
+                getSharedPreferences(KeepAliveService.PREFS, Context.MODE_PRIVATE)
+                    .getInt(KeepAliveService.KEY_UI_SCALE_PERCENT, 100)
+            )
+            AppRepositories.postKeepAliveState(KeepAliveService.isEnabled(this@MainApplication))
         }
 
         SyncScheduler.schedulePeriodic(this)
+        if (KeepAliveService.isEnabled(this)) {
+            KeepAliveService.start(this)
+        }
     }
 
     private fun isNetworkAvailable(): Boolean {

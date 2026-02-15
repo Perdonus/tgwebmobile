@@ -8,6 +8,8 @@ Core goals:
 - offline snapshot + encrypted media cache
 - bridge layer for downloads, offline state, proxy state, and push events
 - push backend API with delivery metrics (`backend/push`)
+- mobile shell enhancements: Android file chooser, edge-back behavior, loading animation,
+  runtime interface scale, theme-adaptive system bars, keep-alive foreground service
 
 ## Modules
 - `app`: Android WebView-only shell (loads bundled Web K or `https://web.telegram.org/k/`)

@@ -69,6 +69,10 @@ object BridgeCommandTypes {
     const val REQUEST_PUSH_PERMISSION = "REQUEST_PUSH_PERMISSION"
     const val SET_PROXY = "SET_PROXY"
     const val GET_PROXY_STATUS = "GET_PROXY_STATUS"
+    const val SET_SYSTEM_UI_STYLE = "SET_SYSTEM_UI_STYLE"
+    const val SET_INTERFACE_SCALE = "SET_INTERFACE_SCALE"
+    const val SET_KEEP_ALIVE = "SET_KEEP_ALIVE"
+    const val GET_KEEP_ALIVE_STATE = "GET_KEEP_ALIVE_STATE"
 }
 
 object BridgeEventTypes {
@@ -78,6 +82,8 @@ object BridgeEventTypes {
     const val SYNC_STATE = "SYNC_STATE"
     const val PROXY_STATE = "PROXY_STATE"
     const val PUSH_PERMISSION_STATE = "PUSH_PERMISSION_STATE"
+    const val KEEP_ALIVE_STATE = "KEEP_ALIVE_STATE"
+    const val INTERFACE_SCALE_STATE = "INTERFACE_SCALE_STATE"
 }
 
 interface WebBridgeContract {

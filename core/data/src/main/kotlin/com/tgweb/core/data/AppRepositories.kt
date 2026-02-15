@@ -23,6 +23,12 @@ object AppRepositories {
     @Volatile
     private var pushPermissionGranted: Boolean = false
 
+    @Volatile
+    private var keepAliveEnabled: Boolean = true
+
+    @Volatile
+    private var interfaceScalePercent: Int = 100
+
     fun postPushMessageReceived(chatId: Long, messageId: Long, preview: String) {
         if (!::webBridge.isInitialized) return
         webBridge.postToWeb(
@@ -117,6 +123,28 @@ object AppRepositories {
     }
 
     fun isPushPermissionGranted(): Boolean = pushPermissionGranted
+
+    fun postKeepAliveState(enabled: Boolean = keepAliveEnabled) {
+        keepAliveEnabled = enabled
+        if (!::webBridge.isInitialized) return
+        webBridge.postToWeb(
+            BridgeEvent(
+                type = BridgeEventTypes.KEEP_ALIVE_STATE,
+                payload = mapOf("enabled" to enabled.toString()),
+            )
+        )
+    }
+
+    fun postInterfaceScaleState(scalePercent: Int = interfaceScalePercent) {
+        interfaceScalePercent = scalePercent
+        if (!::webBridge.isInitialized) return
+        webBridge.postToWeb(
+            BridgeEvent(
+                type = BridgeEventTypes.INTERFACE_SCALE_STATE,
+                payload = mapOf("scalePercent" to scalePercent.toString()),
+            )
+        )
+    }
 
     fun isInitialized(): Boolean {
         return ::chatRepository.isInitialized &&
