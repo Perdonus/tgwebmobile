@@ -550,8 +550,11 @@ class MainActivity : ComponentActivity() {
 
     private fun showProxyBottomSheet(raw: String?) {
         if (raw.isNullOrBlank()) return
-        val parsed = ProxyLinkParser.parse(raw) ?: return
-        openProxyBottomSheet(parsed, raw)
+        val normalized = raw.replace("&amp;", "&").trim()
+        val parsed = ProxyLinkParser.parse(normalized)
+            ?: ProxyLinkParser.parse(Uri.decode(normalized))
+            ?: return
+        openProxyBottomSheet(parsed, normalized)
     }
 
     private fun openProxyBottomSheet(parsed: ProxyConfigSnapshot, sourceLabel: String) {
@@ -1337,7 +1340,10 @@ class MainActivity : ComponentActivity() {
                 var authPages = document.getElementById('auth-pages') ||
                   document.querySelector('.auth-pages, .login-page, [class*=\"loginPage\"], [class*=\"pageSign\"]');
                 var authPage = authPages && authPages.querySelector
-                  ? authPages.querySelector('.page.active, .page-signIn, .page-signQR, .page-signUp, .page-authCode, .page-password, [class*=\"page-sign\"]')
+                  ? authPages.querySelector(
+                    '.page.active, .page-signIn, .page-signQR, .page-signUp, .page-authCode, .page-password, ' +
+                    '.page-sign-in, .page-sign-up, [class*=\"page-sign\"], [class*=\"sign\"]'
+                  )
                   : null;
                 var existing = document.querySelector('.tgweb-auth-import-actions');
                 var existingBranding = document.querySelector('.flygram-auth-branding');
@@ -1348,8 +1354,7 @@ class MainActivity : ComponentActivity() {
                 }
 
                 var isVisible = window.getComputedStyle(authPages).display !== 'none';
-                var isAuthMode = document.body.classList.contains('has-auth-pages') || !!authPage;
-                if (!isVisible || !isAuthMode) {
+                if (!isVisible) {
                   if (existing) { existing.remove(); }
                   if (existingBranding) { existingBranding.remove(); }
                   return;
@@ -1408,6 +1413,7 @@ class MainActivity : ComponentActivity() {
                 wrap.style.width = '100%';
                 wrap.style.maxWidth = '300px';
                 wrap.style.margin = '18px auto 0';
+                wrap.style.zIndex = '15';
 
                 var makeButton = function(text, mode) {
                   var btn = document.createElement('button');
@@ -1440,29 +1446,72 @@ class MainActivity : ComponentActivity() {
               var bindProxyLinkIntercept = function() {
                 if (window.__tgwebProxyLinkBound) { return; }
                 window.__tgwebProxyLinkBound = true;
-                document.addEventListener('click', function(event) {
-                  var link = event.target && event.target.closest ? event.target.closest('a[href]') : null;
-                  if (!link) { return; }
-                  var href = String(link.getAttribute('href') || '').trim();
-                  if (!href) { return; }
+
+                var normalizeProxyUrl = function(rawHref) {
+                  var href = String(rawHref || '').trim();
+                  if (!href) { return ''; }
                   var normalized = href.toLowerCase();
-                  var isProxyLink =
-                    normalized.indexOf('tg://proxy?') === 0 ||
+                  if (normalized.indexOf('/proxy?') === 0 || normalized.indexOf('/socks?') === 0) {
+                    href = 'https://t.me' + href;
+                  }
+                  return href.replace(/&amp;/g, '&');
+                };
+
+                var isProxyHref = function(href) {
+                  var normalized = String(href || '').trim().toLowerCase();
+                  return normalized.indexOf('tg://proxy?') === 0 ||
                     normalized.indexOf('tg://socks?') === 0 ||
                     normalized.indexOf('/proxy?') === 0 ||
                     normalized.indexOf('/socks?') === 0 ||
                     normalized.indexOf('https://t.me/proxy?') === 0 ||
                     normalized.indexOf('http://t.me/proxy?') === 0 ||
                     normalized.indexOf('https://t.me/socks?') === 0 ||
-                    normalized.indexOf('http://t.me/socks?') === 0;
-                  if (!isProxyLink) { return; }
-                  if (normalized.indexOf('/proxy?') === 0 || normalized.indexOf('/socks?') === 0) {
-                    href = 'https://t.me' + href;
+                    normalized.indexOf('http://t.me/socks?') === 0 ||
+                    normalized.indexOf('https://telegram.me/proxy?') === 0 ||
+                    normalized.indexOf('http://telegram.me/proxy?') === 0 ||
+                    normalized.indexOf('https://telegram.me/socks?') === 0 ||
+                    normalized.indexOf('http://telegram.me/socks?') === 0;
+                };
+
+                var proxyRegex = /(tg:\/\/(?:proxy|socks)\?[^\\s<>'\"]+|https?:\/\/(?:t\\.me|telegram\\.me)\/(?:proxy|socks)\?[^\\s<>'\"]+)/i;
+                var lastProxyUrl = '';
+                var lastProxyTs = 0;
+
+                var extractProxyUrl = function(target) {
+                  if (!target) { return ''; }
+                  var link = target.closest && target.closest('a[href]');
+                  if (link) {
+                    var href = normalizeProxyUrl(link.getAttribute('href'));
+                    if (isProxyHref(href)) { return href; }
                   }
+                  var textCarrier = target.closest && target.closest('.bubble, .message, .text-content, .markdown, .reply-markup, .message-content');
+                  var text = String((textCarrier ? textCarrier.textContent : target.textContent) || '');
+                  var match = text.match(proxyRegex);
+                  if (match && match[1]) {
+                    return normalizeProxyUrl(match[1]);
+                  }
+                  return '';
+                };
+
+                var handleProxyEvent = function(event) {
+                  var target = event && event.target;
+                  var href = extractProxyUrl(target);
+                  if (!href) { return; }
+                  var now = Date.now();
+                  if (href === lastProxyUrl && (now - lastProxyTs) < 350) { return; }
+                  lastProxyUrl = href;
+                  lastProxyTs = now;
                   event.preventDefault();
                   event.stopPropagation();
+                  if (event.stopImmediatePropagation) {
+                    event.stopImmediatePropagation();
+                  }
                   send('${BridgeCommandTypes.OPEN_PROXY_PREVIEW}', { url: href });
-                }, true);
+                };
+
+                ['click', 'touchend', 'pointerup'].forEach(function(type) {
+                  document.addEventListener(type, handleProxyEvent, true);
+                });
               };
 
               var isInteractiveElement = function(el) {
