@@ -93,8 +93,6 @@ class MainApplication : Application() {
                                 fileId,
                                 command.payload["targetCollection"] ?: "flygram_downloads",
                             )
-                        } else if (cacheResult.isFailure) {
-                            cacheResult.exceptionOrNull()?.let { throw it }
                         } else {
                             val cachedPath = cacheResult.getOrNull().orEmpty()
                             if (cachedPath.isNotBlank() && cachedPath != "__segment_pending__") {

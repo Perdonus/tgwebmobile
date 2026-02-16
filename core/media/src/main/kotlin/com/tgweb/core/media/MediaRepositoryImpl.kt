@@ -74,19 +74,22 @@ class MediaRepositoryImpl(
         showDownloadNotification(fileId, fileName ?: fileId, 0, inProgress = true)
 
         return runCatching {
-            val connection = openConnection(url)
-            connection.instanceFollowRedirects = true
-            connection.connectTimeout = CONNECT_TIMEOUT_MS
-            connection.readTimeout = READ_TIMEOUT_MS
-            connection.setRequestProperty("Accept-Encoding", "identity")
-            connection.setRequestProperty("User-Agent", defaultUserAgent())
-            connection.setRequestProperty("Referer", "https://web.telegram.org/")
-            val cookie = runCatching { CookieManager.getInstance().getCookie(url) }.getOrNull()
-            if (!cookie.isNullOrBlank()) {
-                connection.setRequestProperty("Cookie", cookie)
+            var requestUrl = url
+            var redirects = 0
+            var connection = openConfiguredConnection(requestUrl)
+            var responseCode = connection.responseCode
+            while (responseCode in 300..399 && redirects < MAX_REDIRECTS) {
+                val location = connection.getHeaderField("Location").orEmpty().trim()
+                if (location.isBlank()) break
+                val nextUrl = runCatching { URL(URL(requestUrl), location).toString() }.getOrNull()
+                    ?: break
+                connection.disconnect()
+                requestUrl = nextUrl
+                redirects += 1
+                connection = openConfiguredConnection(requestUrl)
+                responseCode = connection.responseCode
             }
-            connection.connect()
-            val responseCode = connection.responseCode
+
             if (responseCode !in 200..299) {
                 throw IllegalStateException("HTTP $responseCode for media download")
             }
@@ -95,7 +98,7 @@ class MediaRepositoryImpl(
                 connection.contentType?.substringBefore(';') ?: "application/octet-stream"
             }
             val headerName = URLUtil.guessFileName(
-                url,
+                requestUrl,
                 connection.getHeaderField("Content-Disposition"),
                 resolvedMime,
             )
@@ -112,7 +115,7 @@ class MediaRepositoryImpl(
                         source = input,
                         mimeType = resolvedMime,
                         fileName = finalFileName,
-                        url = url,
+                        url = requestUrl,
                         contentLength = contentLength,
                         contentRange = contentRange,
                     )
@@ -375,6 +378,22 @@ class MediaRepositoryImpl(
         return candidates.firstNotNullOfOrNull { key -> uri.getQueryParameter(key)?.toLongOrNull() }
     }
 
+    private fun openConfiguredConnection(url: String): HttpURLConnection {
+        val connection = openConnection(url)
+        connection.instanceFollowRedirects = false
+        connection.connectTimeout = CONNECT_TIMEOUT_MS
+        connection.readTimeout = READ_TIMEOUT_MS
+        connection.setRequestProperty("Accept-Encoding", "identity")
+        connection.setRequestProperty("User-Agent", defaultUserAgent())
+        connection.setRequestProperty("Referer", "https://web.telegram.org/")
+        val cookie = runCatching { CookieManager.getInstance().getCookie(url) }.getOrNull()
+        if (!cookie.isNullOrBlank()) {
+            connection.setRequestProperty("Cookie", cookie)
+        }
+        connection.connect()
+        return connection
+    }
+
     private fun openConnection(url: String): HttpURLConnection {
         val proxyState = AppRepositories.getProxyState()
         val proxy = when {
@@ -437,6 +456,7 @@ class MediaRepositoryImpl(
     companion object {
         private const val CONNECT_TIMEOUT_MS = 30_000
         private const val READ_TIMEOUT_MS = 60_000
+        private const val MAX_REDIRECTS = 8
         private const val DOWNLOAD_CHANNEL_ID = "flygram_downloads"
         private const val MIN_VALID_FILE_SIZE = 2048L
         private const val SEGMENT_PENDING_TOKEN = "__segment_pending__"

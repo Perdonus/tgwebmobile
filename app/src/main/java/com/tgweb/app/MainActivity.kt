@@ -163,6 +163,10 @@ class MainActivity : ComponentActivity() {
             AppRepositories.postProxyState()
             AppRepositories.postKeepAliveState(KeepAliveService.isEnabled(this@MainActivity))
         }
+        if (runtimePrefs.getBoolean(KeepAliveService.KEY_PENDING_WEB_RELOAD, false)) {
+            runtimePrefs.edit().putBoolean(KeepAliveService.KEY_PENDING_WEB_RELOAD, false).apply()
+            webView.reload()
+        }
     }
 
     override fun onDestroy() {
@@ -339,13 +343,14 @@ class MainActivity : ComponentActivity() {
                 val proxy = AppRepositories.getProxyState()
                 val username = proxy.username
                 val password = proxy.password
+                val hostMatchesProxy = !host.isNullOrBlank() && host.equals(proxy.host, ignoreCase = true)
+                val proxyRealm = realm?.contains("proxy", ignoreCase = true) == true
                 if (
                     proxy.enabled &&
                     proxy.type != ProxyType.MTPROTO &&
                     !username.isNullOrBlank() &&
                     !password.isNullOrBlank() &&
-                    !host.isNullOrBlank() &&
-                    host.equals(proxy.host, ignoreCase = true)
+                    (hostMatchesProxy || proxyRealm)
                 ) {
                     handler?.proceed(username, password)
                     return
@@ -374,20 +379,22 @@ class MainActivity : ComponentActivity() {
 
         webView.addJavascriptInterface(
             AndroidBridgeJsApi { command ->
-                when (command.type) {
-                    BridgeCommandTypes.REQUEST_PUSH_PERMISSION -> requestNotificationPermission()
-                    BridgeCommandTypes.OPEN_MOD_SETTINGS -> openModSettings()
-                    BridgeCommandTypes.OPEN_SESSION_TOOLS -> openSessionTools(command.payload["mode"])
-                    BridgeCommandTypes.OPEN_PROXY_PREVIEW -> showProxyBottomSheet(command.payload["url"])
-                    BridgeCommandTypes.OPEN_AUTHOR_CHANNEL -> openAuthorChannel()
-                    BridgeCommandTypes.SET_PROXY -> handleProxyCommand(command)
-                    BridgeCommandTypes.GET_PROXY_STATUS -> AppRepositories.postProxyState()
-                    BridgeCommandTypes.SET_SYSTEM_UI_STYLE -> applySystemUiStyle(command.payload)
-                    BridgeCommandTypes.SET_INTERFACE_SCALE -> applyInterfaceScale(command.payload["scalePercent"])
-                    BridgeCommandTypes.SET_KEEP_ALIVE -> setKeepAliveEnabled(command.payload["enabled"])
-                    BridgeCommandTypes.GET_KEEP_ALIVE_STATE -> AppRepositories.postKeepAliveState(KeepAliveService.isEnabled(this))
-                    BridgeCommandTypes.OPEN_DOWNLOADS -> openDownloadsManager()
-                    else -> AppRepositories.webBridge.onFromWeb(command)
+                runOnUiThread {
+                    when (command.type) {
+                        BridgeCommandTypes.REQUEST_PUSH_PERMISSION -> requestNotificationPermission()
+                        BridgeCommandTypes.OPEN_MOD_SETTINGS -> openModSettings()
+                        BridgeCommandTypes.OPEN_SESSION_TOOLS -> openSessionTools(command.payload["mode"])
+                        BridgeCommandTypes.OPEN_PROXY_PREVIEW -> showProxyBottomSheet(command.payload["url"])
+                        BridgeCommandTypes.OPEN_AUTHOR_CHANNEL -> openAuthorChannel()
+                        BridgeCommandTypes.SET_PROXY -> handleProxyCommand(command)
+                        BridgeCommandTypes.GET_PROXY_STATUS -> AppRepositories.postProxyState()
+                        BridgeCommandTypes.SET_SYSTEM_UI_STYLE -> applySystemUiStyle(command.payload)
+                        BridgeCommandTypes.SET_INTERFACE_SCALE -> applyInterfaceScale(command.payload["scalePercent"])
+                        BridgeCommandTypes.SET_KEEP_ALIVE -> setKeepAliveEnabled(command.payload["enabled"])
+                        BridgeCommandTypes.GET_KEEP_ALIVE_STATE -> AppRepositories.postKeepAliveState(KeepAliveService.isEnabled(this))
+                        BridgeCommandTypes.OPEN_DOWNLOADS -> openDownloadsManager()
+                        else -> AppRepositories.webBridge.onFromWeb(command)
+                    }
                 }
             },
             JS_BRIDGE_NAME,
@@ -691,20 +698,8 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun openAuthorChannel() {
-        val script = """
-            (function() {
-              try {
-                if (location.origin.indexOf('web.telegram.org') === -1) {
-                  location.href = '${REMOTE_WEBK_URL}#@plugin_ai';
-                } else {
-                  location.hash = '#@plugin_ai';
-                }
-              } catch (e) {
-                location.href = '${REMOTE_WEBK_URL}#@plugin_ai';
-              }
-            })();
-        """.trimIndent()
-        webView.evaluateJavascript(script, null)
+        val channelUrl = "${REMOTE_WEBK_URL}#@plugin_ai"
+        webView.loadUrl(channelUrl)
     }
 
     private fun openSessionTools(mode: String? = null) {
@@ -834,13 +829,21 @@ class MainActivity : ComponentActivity() {
             (function() {
               try {
                 var scale = Math.max(0.75, Math.min(1.4, ${scalePercent} / 100));
-                document.documentElement.style.setProperty('--tgweb-mobile-scale', String(scale));
-                var root = document.getElementById('root') || document.body;
-                if (root) {
-                  root.style.transformOrigin = 'top left';
-                  root.style.transform = 'scale(' + scale + ')';
-                  root.style.width = (100 / scale) + '%';
+                document.documentElement.style.setProperty('--flygram-ui-scale', String(scale));
+                var style = document.getElementById('flygram-scale-style');
+                if (!style) {
+                  style = document.createElement('style');
+                  style.id = 'flygram-scale-style';
+                  document.head.appendChild(style);
                 }
+                style.textContent =
+                  ':root{--flygram-ui-scale:' + scale + ';}' +
+                  'body,.chat,.chatlist,.sidebar,.chat-input,.btn-menu-item,.row,.settings-container{' +
+                    'font-size:calc(100% * var(--flygram-ui-scale)) !important;' +
+                  '}' +
+                  '.chat-input .input-message-input,.bubble .text-content,.message .text-content,.composer-input{' +
+                    'font-size:calc(1em * var(--flygram-ui-scale)) !important;' +
+                  '}';
               } catch (e) {}
             })();
         """.trimIndent()
@@ -964,7 +967,6 @@ class MainActivity : ComponentActivity() {
 
     private fun injectMobileEnhancements() {
         val scale = currentScalePercent()
-        val hideStories = runtimePrefs.getBoolean(KeepAliveService.KEY_HIDE_STORIES, false)
         val md3Effects = runtimePrefs.getBoolean(KeepAliveService.KEY_MD3_EFFECTS, true)
         val dynamicColor = runtimePrefs.getBoolean(KeepAliveService.KEY_DYNAMIC_COLOR, true)
         val md3ContainerStyle = runtimePrefs
@@ -982,7 +984,7 @@ class MainActivity : ComponentActivity() {
               window.__tgwebMobileEnhancerInstalled = true;
 
               var custom = {
-                hideStories: ${if (hideStories) "true" else "false"},
+                hideStories: false,
                 md3Effects: ${if (md3Effects) "true" else "false"},
                 md3Accent: '${md3Accent}',
                 containerStyle: '${md3ContainerStyle}'
@@ -1000,12 +1002,22 @@ class MainActivity : ComponentActivity() {
               var clamp = function(v, min, max) { return Math.max(min, Math.min(max, v)); };
               var applyScale = function(value) {
                 var p = clamp(Number(value) || 100, 75, 140);
-                var zoom = p / 100;
-                document.documentElement.style.setProperty('--tgweb-mobile-scale', String(zoom));
-                document.documentElement.style.zoom = String(zoom);
-                if (document.body) {
-                  document.body.style.zoom = String(zoom);
+                var scale = p / 100;
+                document.documentElement.style.setProperty('--flygram-ui-scale', String(scale));
+                var style = document.getElementById('flygram-scale-style');
+                if (!style) {
+                  style = document.createElement('style');
+                  style.id = 'flygram-scale-style';
+                  document.head.appendChild(style);
                 }
+                style.textContent =
+                  ':root{--flygram-ui-scale:' + scale + ';}' +
+                  'body,.chat,.chatlist,.sidebar,.chat-input,.btn-menu-item,.row,.settings-container{' +
+                    'font-size:calc(100% * var(--flygram-ui-scale)) !important;' +
+                  '}' +
+                  '.chat-input .input-message-input,.bubble .text-content,.message .text-content,.composer-input{' +
+                    'font-size:calc(1em * var(--flygram-ui-scale)) !important;' +
+                  '}';
                 return p;
               };
 
@@ -1111,11 +1123,6 @@ class MainActivity : ComponentActivity() {
               };
 
               var applyCustomizations = function() {
-                if (custom.hideStories) {
-                  document.querySelectorAll('[class*=\"story\"], [class*=\"Story\"], [data-tab=\"stories\"]').forEach(function(node) {
-                    hideNode(node.closest('.stories, .story, .row, .tabs-tab') || node);
-                  });
-                }
                 if (!custom.md3Effects) { return; }
                 var bodyStyles = getComputedStyle(document.body || document.documentElement);
                 var rootBg = colorFromCss(bodyStyles.backgroundColor || '#0e1621');
@@ -1125,9 +1132,16 @@ class MainActivity : ComponentActivity() {
                 var containerBg = blendHex(rootBg, textColor, isLightTheme ? 0.035 : 0.07);
                 var dividerColor = blendHex(rootBg, textColor, isLightTheme ? 0.16 : 0.24);
                 var accentColor = custom.md3Accent && custom.md3Accent.length === 7 ? custom.md3Accent : '#3390ec';
-                var containerCss = custom.containerStyle === 'dividers'
-                  ? 'margin:0 !important;border-radius:0 !important;border:0 !important;border-top:1px solid var(--flygram-divider) !important;'
+                var isDividers = custom.containerStyle === 'dividers';
+                var rowCss = isDividers
+                  ? 'margin:0 !important;border-radius:0 !important;border:0 !important;min-height:48px !important;'
                   : 'margin:6px 10px !important;border-radius:14px !important;border:1px solid var(--flygram-divider) !important;';
+                var groupsCss = isDividers
+                  ? 'margin:8px 10px !important;border-radius:16px !important;border:1px solid var(--flygram-divider) !important;overflow:hidden !important;background:var(--flygram-container) !important;'
+                  : 'margin:0 !important;border:0 !important;border-radius:0 !important;overflow:visible !important;background:transparent !important;';
+                var dividerRowsCss = isDividers
+                  ? '.settings-container .row + .row,.btn-menu .btn-menu-item + .btn-menu-item,.menu-item + .menu-item,.profile-buttons .row + .row{border-top:1px solid var(--flygram-divider) !important;}'
+                  : '';
 
                 var style = document.getElementById('tgweb-md3-patch');
                 if (!style) {
@@ -1148,9 +1162,13 @@ class MainActivity : ComponentActivity() {
                     'background:var(--flygram-bg) !important;' +
                     'color:var(--flygram-text) !important;' +
                   '}' +
+                  '.settings-container .profile-buttons,.settings-container .list,.settings-container .sections,' +
+                  '.settings-container .content,.btn-menu .btn-menu-items,.btn-menu{' +
+                    groupsCss +
+                  '}' +
                   '.settings-container .row,.settings-content .row,.profile-buttons .row,' +
                   '.btn-menu .btn-menu-item,.menu-item,.row.no-subtitle{' +
-                    containerCss +
+                    rowCss +
                     'background:var(--flygram-container) !important;' +
                     'color:var(--flygram-text) !important;' +
                   '}' +
@@ -1167,9 +1185,7 @@ class MainActivity : ComponentActivity() {
                     'background:linear-gradient(135deg, var(--flygram-accent), ' + blendHex(accentColor, '#ffffff', 0.20) + ') !important;' +
                     'color:#fff !important;' +
                   '}' +
-                  '.btn-menu .btn-menu-item + .btn-menu-item{' +
-                    'border-top:1px solid var(--flygram-divider) !important;' +
-                  '}' +
+                  dividerRowsCss +
                   '.popup,.chat-info,.media-viewer{' +
                     'border-radius:18px !important;' +
                   '}';
@@ -1249,6 +1265,9 @@ class MainActivity : ComponentActivity() {
                   e.preventDefault();
                   e.stopPropagation();
                   send('${BridgeCommandTypes.OPEN_AUTHOR_CHANNEL}', { username: 'plugin_ai' });
+                  try {
+                    location.href = '${REMOTE_WEBK_URL}#@plugin_ai';
+                  } catch (_) {}
                 };
 
                 row.append(icon, title);
@@ -1601,13 +1620,31 @@ class MainActivity : ComponentActivity() {
               var touchStartX = 0;
               var touchStartY = 0;
               var touchStartTs = 0;
+              var edgeGestureIntent = '';
 
               document.addEventListener('touchstart', function(e) {
                 if (!e.touches || e.touches.length !== 1) { return; }
                 touchStartX = e.touches[0].clientX;
                 touchStartY = e.touches[0].clientY;
                 touchStartTs = Date.now();
-              }, { passive: true });
+                edgeGestureIntent = '';
+                if (touchStartX >= (window.innerWidth - 28) && isDialogScreenActive() && !isSettingsLikeOpen()) {
+                  edgeGestureIntent = 'close-chat';
+                } else if (touchStartX <= 28 && isMainListScreen()) {
+                  edgeGestureIntent = 'open-menu';
+                }
+              }, { passive: false, capture: true });
+
+              document.addEventListener('touchmove', function(e) {
+                if (!e.touches || e.touches.length !== 1) { return; }
+                if (!edgeGestureIntent) { return; }
+                var dx = e.touches[0].clientX - touchStartX;
+                var dy = e.touches[0].clientY - touchStartY;
+                if (Math.abs(dx) > 22 && Math.abs(dx) > Math.abs(dy) * 1.18) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }
+              }, { passive: false, capture: true });
 
               document.addEventListener('touchend', function(e) {
                 if (!e.changedTouches || e.changedTouches.length !== 1) { return; }
@@ -1660,21 +1697,22 @@ class MainActivity : ComponentActivity() {
                   return;
                 }
 
+                if (!edgeGestureIntent) { return; }
                 var isFastLongSwipe = absDx >= 112 && dt <= 360 && speed >= 0.30;
                 if (!isFastLongSwipe) { return; }
 
                 var fromRightEdge = touchStartX >= (window.innerWidth - 28);
-                if (dx < 0 && fromRightEdge && isDialogScreenActive()) {
+                if (edgeGestureIntent === 'close-chat' && dx < 0 && fromRightEdge && isDialogScreenActive()) {
                   if (closeActiveChatIfPossible()) {
                     return;
                   }
                 }
 
                 var fromLeftEdge = touchStartX <= 28;
-                if (dx > 0 && fromLeftEdge && isMainListScreen()) {
+                if (edgeGestureIntent === 'open-menu' && dx > 0 && fromLeftEdge && isMainListScreen()) {
                   openMainMenuFromSwipe();
                 }
-              }, { passive: true });
+              }, { passive: false, capture: true });
 
               window.addEventListener('tgweb-native', function(event) {
                 var detail = event && event.detail ? event.detail : null;
@@ -1808,7 +1846,7 @@ class MainActivity : ComponentActivity() {
             return
         }
 
-        val proxyRule = buildWebViewProxyRule(proxyState)
+        val proxyRule = buildWebViewProxyRule(proxyState, legacySocksScheme = false)
         if (proxyRule == null) {
             runCatching {
                 ProxyController.getInstance().clearProxyOverride(
@@ -1821,34 +1859,73 @@ class MainActivity : ComponentActivity() {
             return
         }
 
-        val proxyConfig = ProxyConfig.Builder()
-            .addProxyRule(proxyRule)
-            .build()
+        val buildConfig: (String) -> ProxyConfig = { rule ->
+            ProxyConfig.Builder()
+                .addProxyRule(rule)
+                .build()
+        }
 
-        runCatching {
+        val username = proxyState.username
+        val password = proxyState.password
+        if (
+            proxyState.type == ProxyType.HTTP &&
+            !username.isNullOrBlank() &&
+            !password.isNullOrBlank()
+        ) {
+            runCatching {
+                webView.setHttpAuthUsernamePassword(proxyState.host, "", username, password)
+            }.onFailure {
+                Log.w(TAG, "Unable to seed HTTP auth credentials for proxy host", it)
+            }
+        }
+
+        val applyRule: (String) -> Unit = { rule ->
             ProxyController.getInstance().setProxyOverride(
-                proxyConfig,
+                buildConfig(rule),
                 executor,
                 { AppRepositories.postProxyState(proxyState) },
             )
-        }.onFailure {
-            Log.e(TAG, "Unable to apply WebView proxy rule: $proxyRule", it)
-            runCatching {
-                ProxyController.getInstance().clearProxyOverride(
-                    executor,
-                    { AppRepositories.postProxyState(ProxyConfigSnapshot(enabled = false, type = ProxyType.DIRECT)) },
-                )
-            }.onFailure { clearError ->
-                Log.w(TAG, "Unable to rollback proxy override after failure", clearError)
+        }
+
+        val firstTry = runCatching { applyRule(proxyRule) }
+        if (firstTry.isSuccess) return
+
+        val firstError = firstTry.exceptionOrNull()
+        Log.e(TAG, "Unable to apply WebView proxy rule: $proxyRule", firstError)
+
+        val shouldTryLegacySocks =
+            (proxyState.type == ProxyType.SOCKS5 || proxyState.type == ProxyType.MTPROTO) &&
+                proxyRule.startsWith("socks5://")
+        if (shouldTryLegacySocks) {
+            val fallbackRule = buildWebViewProxyRule(proxyState, legacySocksScheme = true)
+            if (!fallbackRule.isNullOrBlank()) {
+                val fallbackTry = runCatching { applyRule(fallbackRule) }
+                if (fallbackTry.isSuccess) {
+                    Log.w(TAG, "Applied legacy socks proxy rule fallback: $fallbackRule")
+                    return
+                }
+                Log.e(TAG, "Unable to apply fallback WebView proxy rule: $fallbackRule", fallbackTry.exceptionOrNull())
             }
+        }
+
+        runCatching {
+            ProxyController.getInstance().clearProxyOverride(
+                executor,
+                { AppRepositories.postProxyState(ProxyConfigSnapshot(enabled = false, type = ProxyType.DIRECT)) },
+            )
+        }.onFailure { clearError ->
+            Log.w(TAG, "Unable to rollback proxy override after failure", clearError)
         }
     }
 
-    private fun buildWebViewProxyRule(proxyState: ProxyConfigSnapshot): String? {
+    private fun buildWebViewProxyRule(
+        proxyState: ProxyConfigSnapshot,
+        legacySocksScheme: Boolean = false,
+    ): String? {
         val scheme = when (proxyState.type) {
             ProxyType.HTTP -> "http"
-            ProxyType.SOCKS5 -> "socks"
-            ProxyType.MTPROTO -> "socks" // compatibility fallback for WebView transport
+            ProxyType.SOCKS5 -> if (legacySocksScheme) "socks" else "socks5"
+            ProxyType.MTPROTO -> if (legacySocksScheme) "socks" else "socks5" // compatibility fallback for WebView transport
             ProxyType.DIRECT -> return null
         }
         // WebView ProxyController rejects credentials in proxy URL.
