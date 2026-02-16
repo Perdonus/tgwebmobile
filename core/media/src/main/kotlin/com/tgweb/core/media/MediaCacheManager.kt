@@ -63,6 +63,13 @@ class MediaCacheManager(
         mediaDao.setPinned(fileId = fileId, isPinned = isPinned)
     }
 
+    suspend fun remove(fileId: String): Boolean {
+        val media = mediaDao.get(fileId) ?: return false
+        runCatching { File(media.localPath).delete() }
+        mediaDao.delete(fileId)
+        return true
+    }
+
     suspend fun clearAll() {
         cacheDir.listFiles()?.forEach { it.delete() }
         mediaDao.deleteAll()

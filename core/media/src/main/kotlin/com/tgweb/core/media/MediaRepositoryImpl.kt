@@ -7,6 +7,10 @@ import android.provider.MediaStore
 import com.tgweb.core.data.AppRepositories
 import com.tgweb.core.data.MediaRepository
 import java.io.File
+import java.net.HttpURLConnection
+import java.net.InetSocketAddress
+import java.net.Proxy
+import java.net.URL
 
 class MediaRepositoryImpl(
     private val context: Context,
@@ -23,6 +27,44 @@ class MediaRepositoryImpl(
         return Result.success(path)
     }
 
+    override suspend fun cacheRemoteFile(fileId: String, url: String, mimeType: String, fileName: String?): Result<String> {
+        val existing = cacheManager.resolve(fileId)
+        if (existing != null) {
+            AppRepositories.postDownloadProgress(fileId = fileId, percent = 100, localUri = existing)
+            return Result.success(existing)
+        }
+
+        if (url.isBlank()) {
+            AppRepositories.postDownloadProgress(fileId = fileId, percent = 0, error = "missing_url")
+            return Result.failure(IllegalArgumentException("Remote url is empty"))
+        }
+
+        AppRepositories.postDownloadProgress(fileId = fileId, percent = 0)
+        return runCatching {
+            val connection = openConnection(url)
+            connection.instanceFollowRedirects = true
+            connection.connectTimeout = CONNECT_TIMEOUT_MS
+            connection.readTimeout = READ_TIMEOUT_MS
+            connection.connect()
+            val resolvedMime = mimeType.ifBlank { connection.contentType ?: "application/octet-stream" }
+            val sizeBytes = connection.contentLengthLong.coerceAtLeast(0L)
+            val path = connection.inputStream.use { input ->
+                cacheManager.cache(
+                    fileId = fileId,
+                    mimeType = resolvedMime,
+                    bytes = sizeBytes,
+                    source = input,
+                    isPinned = false,
+                )
+            }
+            connection.disconnect()
+            AppRepositories.postDownloadProgress(fileId = fileId, percent = 100, localUri = path)
+            path
+        }.onFailure {
+            AppRepositories.postDownloadProgress(fileId = fileId, percent = 0, error = "download_failed")
+        }
+    }
+
     override suspend fun prefetch(chatId: Long, window: Int) {
         // Placeholder for TDLib file prefetching rules.
     }
@@ -36,10 +78,15 @@ class MediaRepositoryImpl(
             return Result.failure(IllegalStateException("Cached file missing"))
         }
 
+        val relativeFolder = targetCollection
+            .trim()
+            .ifBlank { "tgweb_downloads" }
+            .replace(Regex("[^a-zA-Z0-9_\\-]"), "_")
+
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, source.name)
             put(MediaStore.MediaColumns.MIME_TYPE, "application/octet-stream")
-            put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/tgweb")
+            put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/$relativeFolder")
             put(MediaStore.MediaColumns.IS_PENDING, 1)
         }
 
@@ -58,9 +105,34 @@ class MediaRepositoryImpl(
         return Result.success(uri.toString())
     }
 
+    override suspend fun removeCachedFile(fileId: String): Boolean {
+        return cacheManager.remove(fileId)
+    }
+
     override suspend fun clearCache(scope: String) {
         if (scope == "all" || scope == "media") {
             cacheManager.clearAll()
         }
+    }
+
+    private fun openConnection(url: String): HttpURLConnection {
+        val proxyState = AppRepositories.getProxyState()
+        val proxy = when {
+            !proxyState.enabled -> Proxy.NO_PROXY
+            proxyState.type == com.tgweb.core.webbridge.ProxyType.HTTP -> {
+                Proxy(Proxy.Type.HTTP, InetSocketAddress(proxyState.host, proxyState.port))
+            }
+            proxyState.type == com.tgweb.core.webbridge.ProxyType.SOCKS5 ||
+                proxyState.type == com.tgweb.core.webbridge.ProxyType.MTPROTO -> {
+                Proxy(Proxy.Type.SOCKS, InetSocketAddress(proxyState.host, proxyState.port))
+            }
+            else -> Proxy.NO_PROXY
+        }
+        return URL(url).openConnection(proxy) as HttpURLConnection
+    }
+
+    companion object {
+        private const val CONNECT_TIMEOUT_MS = 30_000
+        private const val READ_TIMEOUT_MS = 60_000
     }
 }

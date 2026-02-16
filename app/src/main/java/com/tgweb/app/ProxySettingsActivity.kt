@@ -8,6 +8,7 @@ import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.EditText
 import android.widget.Spinner
+import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SwitchCompat
@@ -15,7 +16,19 @@ import androidx.lifecycle.lifecycleScope
 import com.tgweb.core.data.AppRepositories
 import com.tgweb.core.webbridge.ProxyConfigSnapshot
 import com.tgweb.core.webbridge.ProxyType
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import java.net.HttpURLConnection
+import java.net.InetSocketAddress
+import java.net.Proxy
+import java.net.Socket
+import java.net.URL
+import kotlin.math.roundToInt
 
 class ProxySettingsActivity : AppCompatActivity() {
     private val proxyTypeValues = listOf(ProxyType.HTTP.name, ProxyType.SOCKS5.name, ProxyType.MTPROTO.name)
@@ -28,14 +41,26 @@ class ProxySettingsActivity : AppCompatActivity() {
     private lateinit var passwordInput: EditText
     private lateinit var secretInput: EditText
     private lateinit var linkInput: EditText
+    private lateinit var proxyHealthText: TextView
 
     private lateinit var serverBlock: View
     private lateinit var authBlock: View
     private lateinit var secretBlock: View
+    private var proxyHealthJob: Job? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        val surfaceColor = UiThemeBridge.readSurfaceColor(this)
+        setTheme(
+            if (UiThemeBridge.isLight(surfaceColor)) {
+                R.style.Theme_TGWeb_Settings_Light
+            } else {
+                R.style.Theme_TGWeb_Settings_Dark
+            },
+        )
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_proxy_settings)
+        UiThemeBridge.applyWindowColors(this, surfaceColor)
+        UiThemeBridge.applyContentContrast(findViewById(android.R.id.content), surfaceColor)
 
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
         supportActionBar?.title = getString(R.string.proxy_settings_title)
@@ -49,6 +74,17 @@ class ProxySettingsActivity : AppCompatActivity() {
         intent?.data?.let { uri ->
             applyProxyFromUri(uri)
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        startProxyHealthLoop()
+    }
+
+    override fun onStop() {
+        proxyHealthJob?.cancel()
+        proxyHealthJob = null
+        super.onStop()
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
@@ -68,6 +104,7 @@ class ProxySettingsActivity : AppCompatActivity() {
         passwordInput = findViewById(R.id.proxyPasswordInput)
         secretInput = findViewById(R.id.proxySecretInput)
         linkInput = findViewById(R.id.proxyLinkInput)
+        proxyHealthText = findViewById(R.id.proxyHealthText)
 
         serverBlock = findViewById(R.id.proxyServerBlock)
         authBlock = findViewById(R.id.proxyAuthBlock)
@@ -108,7 +145,7 @@ class ProxySettingsActivity : AppCompatActivity() {
         }
 
         findViewById<Button>(R.id.proxySaveButton).setOnClickListener {
-            val state = readStateFromForm() ?: return@setOnClickListener
+            val state = readStateFromForm(showErrors = true) ?: return@setOnClickListener
             persistProxyState(state)
         }
 
@@ -130,6 +167,7 @@ class ProxySettingsActivity : AppCompatActivity() {
         lifecycleScope.launch {
             AppRepositories.updateProxyState(state)
             showToast(getString(R.string.proxy_saved))
+            startProxyHealthLoop()
         }
     }
 
@@ -157,7 +195,7 @@ class ProxySettingsActivity : AppCompatActivity() {
         updateFieldVisibility()
     }
 
-    private fun readStateFromForm(): ProxyConfigSnapshot? {
+    private fun readStateFromForm(showErrors: Boolean): ProxyConfigSnapshot? {
         if (!proxyEnabledSwitch.isChecked) {
             return ProxyConfigSnapshot(enabled = false, type = ProxyType.DIRECT)
         }
@@ -167,7 +205,7 @@ class ProxySettingsActivity : AppCompatActivity() {
         val port = portInput.text?.toString()?.trim()?.toIntOrNull() ?: 0
 
         if (host.isBlank() || port !in 1..65535) {
-            showToast(getString(R.string.proxy_invalid_host_port))
+            if (showErrors) showToast(getString(R.string.proxy_invalid_host_port))
             return null
         }
 
@@ -176,7 +214,7 @@ class ProxySettingsActivity : AppCompatActivity() {
         val secret = secretInput.text?.toString()?.trim().orEmpty().ifBlank { null }
 
         if (type == ProxyType.MTPROTO && secret.isNullOrBlank()) {
-            showToast(getString(R.string.proxy_secret_required))
+            if (showErrors) showToast(getString(R.string.proxy_secret_required))
             return null
         }
 
@@ -209,7 +247,82 @@ class ProxySettingsActivity : AppCompatActivity() {
         secretBlock.visibility = if (enabled && type == ProxyType.MTPROTO) View.VISIBLE else View.GONE
     }
 
+    private fun startProxyHealthLoop() {
+        proxyHealthJob?.cancel()
+        proxyHealthJob = lifecycleScope.launch {
+            while (isActive) {
+                val current = readStateFromForm(showErrors = false) ?: AppRepositories.getProxyState()
+                if (!current.enabled || current.type == ProxyType.DIRECT || current.host.isBlank() || current.port !in 1..65535) {
+                    proxyHealthText.text = getString(R.string.proxy_health_disabled)
+                    delay(PROXY_HEALTH_INTERVAL_MS)
+                    continue
+                }
+
+                proxyHealthText.text = getString(R.string.proxy_health_checking)
+                val pingMs = withTimeoutOrNull(PROXY_HEALTH_TIMEOUT_MS) {
+                    measureProxyLatency(current)
+                }
+
+                proxyHealthText.text = if (pingMs != null) {
+                    getString(R.string.proxy_health_ok, pingMs.roundToInt())
+                } else {
+                    getString(R.string.proxy_health_timeout)
+                }
+                delay(PROXY_HEALTH_INTERVAL_MS)
+            }
+        }
+    }
+
+    private suspend fun measureProxyLatency(state: ProxyConfigSnapshot): Double? = withContext(Dispatchers.IO) {
+        val startedAt = System.nanoTime()
+        runCatching {
+            when (state.type) {
+                ProxyType.MTPROTO -> {
+                    Socket().use { socket ->
+                        socket.connect(InetSocketAddress(state.host, state.port), CONNECT_TIMEOUT_MS)
+                    }
+                }
+                ProxyType.SOCKS5 -> {
+                    val proxy = Proxy(Proxy.Type.SOCKS, InetSocketAddress(state.host, state.port))
+                    URL(PING_URL).openConnection(proxy).let { connection ->
+                        val http = connection as HttpURLConnection
+                        http.instanceFollowRedirects = false
+                        http.connectTimeout = CONNECT_TIMEOUT_MS
+                        http.readTimeout = READ_TIMEOUT_MS
+                        http.requestMethod = "HEAD"
+                        http.connect()
+                        http.responseCode
+                        http.disconnect()
+                    }
+                }
+                ProxyType.HTTP -> {
+                    val proxy = Proxy(Proxy.Type.HTTP, InetSocketAddress(state.host, state.port))
+                    URL(PING_URL).openConnection(proxy).let { connection ->
+                        val http = connection as HttpURLConnection
+                        http.instanceFollowRedirects = false
+                        http.connectTimeout = CONNECT_TIMEOUT_MS
+                        http.readTimeout = READ_TIMEOUT_MS
+                        http.requestMethod = "HEAD"
+                        http.connect()
+                        http.responseCode
+                        http.disconnect()
+                    }
+                }
+                ProxyType.DIRECT -> return@withContext null
+            }
+            (System.nanoTime() - startedAt) / 1_000_000.0
+        }.getOrNull()
+    }
+
     private fun showToast(message: String) {
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+    }
+
+    companion object {
+        private const val PING_URL = "https://web.telegram.org/"
+        private const val CONNECT_TIMEOUT_MS = 15_000
+        private const val READ_TIMEOUT_MS = 15_000
+        private const val PROXY_HEALTH_INTERVAL_MS = 10_000L
+        private const val PROXY_HEALTH_TIMEOUT_MS = 60_000L
     }
 }

@@ -18,6 +18,8 @@
 
     <string name="mod_proxy_title">Прокси</string>
     <string name="mod_proxy_summary">HTTP, SOCKS5, MTProto, импорт tg:// и t.me ссылок</string>
+    <string name="mod_downloads_title">Загрузки</string>
+    <string name="mod_downloads_summary">Локальный кеш и экспорт в Downloads/tgweb_downloads</string>
     <string name="mod_bundled_web_title">Использовать bundled Telegram Web</string>
     <string name="mod_bundled_web_summary">Если отключено, загружается web.telegram.org/k/</string>
     <string name="mod_version_title">Версия</string>
@@ -41,4 +43,18 @@
     <string name="proxy_saved">Прокси сохранён</string>
     <string name="proxy_invalid_host_port">Проверь host/port (1..65535)</string>
     <string name="proxy_secret_required">Для MTProto обязателен secret</string>
+    <string name="proxy_health_checking">Проверка прокси...</string>
+    <string name="proxy_health_ok">Прокси работает • %1$d мс</string>
+    <string name="proxy_health_timeout">Прокси не отвечает (таймаут 60 сек)</string>
+    <string name="proxy_health_disabled">Прокси выключен</string>
+
+    <string name="downloads_title">Загрузки</string>
+    <string name="downloads_refresh">Обновить список</string>
+    <string name="downloads_empty">Кеш загрузок пока пуст</string>
+    <string name="downloads_action_export">Сохранить в Downloads/tgweb_downloads</string>
+    <string name="downloads_action_delete_cache">Удалить из кеша</string>
+    <string name="downloads_export_done">Файл сохранён в Downloads/tgweb_downloads</string>
+    <string name="downloads_export_failed">Не удалось сохранить файл</string>
+    <string name="downloads_delete_done">Файл удалён из кеша</string>
+    <string name="downloads_delete_failed">Не удалось удалить файл из кеша</string>
 </resources>

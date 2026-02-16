@@ -59,6 +59,12 @@
             android:label="@string/proxy_settings_title"
             android:theme="@style/Theme.TGWeb.Settings" />
 
+        <activity
+            android:name=".DownloadsActivity"
+            android:exported="false"
+            android:label="@string/downloads_title"
+            android:theme="@style/Theme.TGWeb.Settings" />
+
         <service
             android:name=".KeepAliveService"
             android:enabled="true"

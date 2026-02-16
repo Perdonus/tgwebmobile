@@ -74,10 +74,23 @@ class MainApplication : Application() {
                     BridgeCommandTypes.DOWNLOAD_MEDIA -> {
                         val fileId = command.payload["fileId"].orEmpty()
                         if (fileId.isBlank()) return@launch
+                        val url = command.payload["url"].orEmpty()
+                        val mime = command.payload["mime"].orEmpty()
+                        val name = command.payload["name"]
+
+                        mediaRepository.cacheRemoteFile(
+                            fileId = fileId,
+                            url = url,
+                            mimeType = mime,
+                            fileName = name,
+                        )
 
                         val export = command.payload["export"].orEmpty().equals("true", ignoreCase = true)
                         if (export) {
-                            mediaRepository.downloadToPublicStorage(fileId, command.payload["targetCollection"] ?: "downloads")
+                            mediaRepository.downloadToPublicStorage(
+                                fileId,
+                                command.payload["targetCollection"] ?: "tgweb_downloads",
+                            )
                         } else {
                             mediaRepository.getMediaFile(fileId)
                         }

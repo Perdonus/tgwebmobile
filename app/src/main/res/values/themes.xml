@@ -9,4 +9,16 @@
         <item name="colorPrimaryDark">@color/tgweb_primary_dark</item>
         <item name="android:colorBackground">@color/tgweb_background</item>
     </style>
+
+    <style name="Theme.TGWeb.Settings.Light" parent="Theme.AppCompat.Light">
+        <item name="colorPrimary">@color/tgweb_primary</item>
+        <item name="colorPrimaryDark">@color/tgweb_primary_dark</item>
+        <item name="android:colorBackground">@color/tgweb_background</item>
+    </style>
+
+    <style name="Theme.TGWeb.Settings.Dark" parent="Theme.AppCompat">
+        <item name="colorPrimary">@color/tgweb_primary</item>
+        <item name="colorPrimaryDark">@color/tgweb_primary_dark</item>
+        <item name="android:colorBackground">#0E1621</item>
+    </style>
 </resources>

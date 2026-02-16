@@ -24,6 +24,11 @@
             android:key="mod_proxy_settings"
             android:title="@string/mod_proxy_title"
             android:summary="@string/mod_proxy_summary" />
+
+        <Preference
+            android:key="mod_downloads_manager"
+            android:title="@string/mod_downloads_title"
+            android:summary="@string/mod_downloads_summary" />
     </PreferenceCategory>
 
     <PreferenceCategory android:title="@string/mod_category_web">

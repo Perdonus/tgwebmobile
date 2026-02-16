@@ -13,8 +13,10 @@ interface ChatRepository {
 
 interface MediaRepository {
     suspend fun getMediaFile(fileId: String): Result<String>
+    suspend fun cacheRemoteFile(fileId: String, url: String, mimeType: String, fileName: String?): Result<String>
     suspend fun prefetch(chatId: Long, window: Int)
     suspend fun downloadToPublicStorage(fileId: String, targetCollection: String): Result<String>
+    suspend fun removeCachedFile(fileId: String): Boolean
     suspend fun clearCache(scope: String)
 }
 

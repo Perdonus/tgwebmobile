@@ -24,6 +24,7 @@ import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
@@ -136,6 +137,11 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         applyInterfaceScale(currentScalePercent().toString())
+        webView.settings.cacheMode = if (isNetworkAvailable()) {
+            WebSettings.LOAD_DEFAULT
+        } else {
+            WebSettings.LOAD_CACHE_ELSE_NETWORK
+        }
         lifecycleScope.launch {
             applyProxyToWebView(AppRepositories.getProxyState())
             AppRepositories.postProxyState()
@@ -215,6 +221,11 @@ class MainActivity : ComponentActivity() {
         settings.setSupportMultipleWindows(false)
         settings.builtInZoomControls = false
         settings.displayZoomControls = false
+        settings.cacheMode = if (isNetworkAvailable()) {
+            WebSettings.LOAD_DEFAULT
+        } else {
+            WebSettings.LOAD_CACHE_ELSE_NETWORK
+        }
 
         webView.webChromeClient = object : WebChromeClient() {
             override fun onPermissionRequest(request: PermissionRequest?) {
@@ -259,6 +270,11 @@ class MainActivity : ComponentActivity() {
             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                 startedAtElapsedMs = SystemClock.elapsedRealtime()
                 AppRepositories.postNetworkState(isNetworkAvailable())
+                view?.settings?.cacheMode = if (isNetworkAvailable()) {
+                    WebSettings.LOAD_DEFAULT
+                } else {
+                    WebSettings.LOAD_CACHE_ELSE_NETWORK
+                }
                 showLoadingOverlay()
             }
 
@@ -304,8 +320,8 @@ class MainActivity : ComponentActivity() {
                         "url" to url,
                         "mime" to (mimeType ?: "application/octet-stream"),
                         "name" to fileName,
-                        "export" to "true",
-                        "targetCollection" to "downloads",
+                        "export" to "false",
+                        "targetCollection" to "tgweb_downloads",
                     ),
                 ),
             )
@@ -322,6 +338,7 @@ class MainActivity : ComponentActivity() {
                     BridgeCommandTypes.SET_INTERFACE_SCALE -> applyInterfaceScale(command.payload["scalePercent"])
                     BridgeCommandTypes.SET_KEEP_ALIVE -> setKeepAliveEnabled(command.payload["enabled"])
                     BridgeCommandTypes.GET_KEEP_ALIVE_STATE -> AppRepositories.postKeepAliveState(KeepAliveService.isEnabled(this))
+                    BridgeCommandTypes.OPEN_DOWNLOADS -> openDownloadsManager()
                     else -> AppRepositories.webBridge.onFromWeb(command)
                 }
             },
@@ -352,6 +369,10 @@ class MainActivity : ComponentActivity() {
 
     private fun loadWebBundle() {
         val bundledUrl = resolveBundledWebKUrl()
+        if (!isNetworkAvailable() && bundledUrl != null) {
+            webView.loadUrl(bundledUrl)
+            return
+        }
         if (bundledUrl != null && runtimePrefs.getBoolean(KeepAliveService.KEY_USE_BUNDLED_WEBK, true)) {
             webView.loadUrl(bundledUrl)
             return
@@ -467,6 +488,10 @@ class MainActivity : ComponentActivity() {
 
     private fun openModSettings() {
         startActivity(Intent(this, ModSettingsActivity::class.java))
+    }
+
+    private fun openDownloadsManager() {
+        startActivity(Intent(this, DownloadsActivity::class.java))
     }
 
     private fun cacheCurrentMainFrameHtml(url: String?) {
@@ -788,6 +813,34 @@ class MainActivity : ComponentActivity() {
                 buttonsRoot.appendChild(row);
               };
 
+              var ensureDownloadsButton = function() {
+                var header = document.querySelector('.left-header, .Topbar, .topbar');
+                if (!header) { return; }
+                if (header.querySelector('.tgweb-downloads-button')) { return; }
+
+                var button = document.createElement('button');
+                button.className = 'btn-icon tgweb-downloads-button';
+                button.type = 'button';
+                button.setAttribute('aria-label', 'Downloads');
+                button.textContent = '⬇';
+                button.style.marginInlineStart = '6px';
+                button.style.fontSize = '18px';
+                button.style.lineHeight = '18px';
+                button.style.width = '34px';
+                button.style.height = '34px';
+                button.style.border = '0';
+                button.style.borderRadius = '10px';
+                button.style.background = 'transparent';
+                button.style.color = 'inherit';
+                button.style.cursor = 'pointer';
+                button.addEventListener('click', function(e) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  send('${BridgeCommandTypes.OPEN_DOWNLOADS}', {});
+                }, { passive: false });
+                header.appendChild(button);
+              };
+
               var isInteractiveElement = function(el) {
                 if (!el || !el.closest) { return false; }
                 return !!el.closest('a,button,input,textarea,select,label,[role=\"button\"],[contenteditable=\"true\"]');
@@ -802,17 +855,25 @@ class MainActivity : ComponentActivity() {
                 return el.closest('.bubble,[data-mid]');
               };
 
-              var closeActiveChatIfPossible = function() {
-                var btn = document.querySelector(
+              var findChatCloseButton = function() {
+                return document.querySelector(
                   '.topbar .sidebar-close-button:not(.hide), ' +
                   '.chat-info-container .sidebar-close-button:not(.hide), ' +
                   '.sidebar-header .sidebar-close-button:not(.hide)'
                 );
+              };
+
+              var closeActiveChatIfPossible = function() {
+                var btn = findChatCloseButton();
                 if (btn && typeof btn.click === 'function') {
                   btn.click();
                   return true;
                 }
                 return false;
+              };
+
+              var hasOpenDialog = function() {
+                return !!findChatCloseButton();
               };
 
               var isMediaViewerOpen = function() {
@@ -864,6 +925,10 @@ class MainActivity : ComponentActivity() {
                   }
                 }
                 return false;
+              };
+
+              var isMainListScreen = function() {
+                return !hasOpenDialog();
               };
 
               var lastTapTs = 0;
@@ -923,8 +988,16 @@ class MainActivity : ComponentActivity() {
                   return;
                 }
 
-                if (touchStartX <= 28 && dx > 56) {
+                var fromRightEdge = touchStartX >= (window.innerWidth - 36);
+                if (fromRightEdge && dx < -56) {
                   if (closeActiveChatIfPossible()) {
+                    return;
+                  }
+                }
+
+                var fromLeftEdge = touchStartX <= 36;
+                if (dx > 56 && (fromLeftEdge || isMainListScreen())) {
+                  if (hasOpenDialog() && closeActiveChatIfPossible()) {
                     return;
                   }
                   openMainMenuFromSwipe();
@@ -944,10 +1017,12 @@ class MainActivity : ComponentActivity() {
               removeSwitchLinks();
               syncSystemBars();
               ensureModSettingsEntry();
+              ensureDownloadsButton();
 
               setInterval(removeSwitchLinks, 1800);
               setInterval(syncSystemBars, 2000);
               setInterval(ensureModSettingsEntry, 1200);
+              setInterval(ensureDownloadsButton, 1500);
             })();
         """.trimIndent()
 

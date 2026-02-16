@@ -27,6 +27,7 @@ class ModSettingsFragment : PreferenceFragmentCompat() {
         bindBundledWebPreference()
         bindPushPermissionPreference()
         bindProxyEntryPreference()
+        bindDownloadsEntryPreference()
         bindVersionPreference()
     }
 
@@ -96,6 +97,14 @@ class ModSettingsFragment : PreferenceFragmentCompat() {
         }
     }
 
+    private fun bindDownloadsEntryPreference() {
+        val pref = findPreference<Preference>(KEY_DOWNLOADS_MANAGER) ?: return
+        pref.setOnPreferenceClickListener {
+            startActivity(Intent(requireContext(), DownloadsActivity::class.java))
+            true
+        }
+    }
+
     private fun bindVersionPreference() {
         val versionName = runCatching {
             requireContext().packageManager.getPackageInfo(requireContext().packageName, 0).versionName
@@ -125,6 +134,7 @@ class ModSettingsFragment : PreferenceFragmentCompat() {
         private const val KEY_KEEP_ALIVE = "mod_keep_alive"
         private const val KEY_PUSH_PERMISSION = "mod_push_permission"
         private const val KEY_PROXY_SETTINGS = "mod_proxy_settings"
+        private const val KEY_DOWNLOADS_MANAGER = "mod_downloads_manager"
         private const val KEY_BUNDLED_WEB = "mod_use_bundled_web"
         private const val KEY_VERSION = "mod_version"
     }
