@@ -76,33 +76,58 @@ class MediaRepositoryImpl(
         return runCatching {
             var requestUrl = url
             var redirects = 0
-            var connection = openConfiguredConnection(requestUrl)
-            var responseCode = connection.responseCode
-            while (responseCode in 300..399 && redirects < MAX_REDIRECTS) {
-                val location = connection.getHeaderField("Location").orEmpty().trim()
-                if (location.isBlank()) break
-                val nextUrl = runCatching { URL(URL(requestUrl), location).toString() }.getOrNull()
-                    ?: break
-                connection.disconnect()
-                requestUrl = nextUrl
-                redirects += 1
+            var connection: HttpURLConnection
+
+            while (true) {
                 connection = openConfiguredConnection(requestUrl)
-                responseCode = connection.responseCode
+                val responseCode = connection.responseCode
+
+                if (responseCode in 300..399 && redirects < MAX_REDIRECTS) {
+                    val location = connection.getHeaderField("Location").orEmpty().trim()
+                    val nextUrl = if (location.isBlank()) {
+                        null
+                    } else {
+                        runCatching { URL(URL(requestUrl), location).toString() }.getOrNull()
+                    }
+                    connection.disconnect()
+                    if (nextUrl.isNullOrBlank()) break
+                    requestUrl = nextUrl
+                    redirects += 1
+                    continue
+                }
+
+                if (responseCode !in 200..299) {
+                    connection.disconnect()
+                    throw IllegalStateException("HTTP $responseCode for media download")
+                }
+
+                val contentType = connection.contentType?.substringBefore(';')?.trim().orEmpty()
+                if (isLikelyHtmlResponse(contentType)) {
+                    val htmlPayload = runCatching {
+                        connection.inputStream.bufferedReader().use { reader ->
+                            reader.readText().take(MAX_HTML_SNIFF)
+                        }
+                    }.getOrDefault("")
+                    val htmlRedirect = extractRedirectUrlFromHtml(htmlPayload, requestUrl)
+                    connection.disconnect()
+                    if (!htmlRedirect.isNullOrBlank() && redirects < MAX_REDIRECTS) {
+                        requestUrl = htmlRedirect
+                        redirects += 1
+                        continue
+                    }
+                    throw IllegalStateException("Unexpected HTML response for media download")
+                }
+                break
             }
 
-            if (responseCode !in 200..299) {
-                throw IllegalStateException("HTTP $responseCode for media download")
-            }
-
-            val resolvedMime = mimeType.ifBlank {
-                connection.contentType?.substringBefore(';') ?: "application/octet-stream"
-            }
+            val serverMime = connection.contentType?.substringBefore(';')?.trim().orEmpty()
+            val resolvedMime = resolveMimeType(requested = mimeType, detected = serverMime)
             val headerName = URLUtil.guessFileName(
                 requestUrl,
                 connection.getHeaderField("Content-Disposition"),
                 resolvedMime,
             )
-            val finalFileName = fileName?.takeIf { it.isNotBlank() } ?: headerName
+            val finalFileName = chooseFileName(provided = fileName, detected = headerName)
             val contentLength = connection.contentLengthLong.coerceAtLeast(0L)
             val contentRange = parseContentRange(connection.getHeaderField("Content-Range"))
             val isSegmented = isSegmentedUrl || contentRange != null
@@ -141,7 +166,7 @@ class MediaRepositoryImpl(
                             if (progress != lastProgress && (progress == 100 || progress - lastProgress >= 3)) {
                                 lastProgress = progress
                                 AppRepositories.postDownloadProgress(fileId = fileId, percent = progress)
-                                showDownloadNotification(fileId, finalFileName ?: fileId, progress, inProgress = progress < 100)
+                                showDownloadNotification(fileId, finalFileName, progress, inProgress = progress < 100)
                             }
                         }
                     },
@@ -149,12 +174,20 @@ class MediaRepositoryImpl(
             }
             connection.disconnect()
 
-            if (contentLength in 1 until MIN_VALID_FILE_SIZE && resolvedMime.startsWith("text/")) {
+            val writtenBytes = runCatching { File(path).length() }.getOrDefault(0L)
+            if (writtenBytes <= 0L) {
+                throw IllegalStateException("Downloaded file is empty")
+            }
+            if (
+                contentLength in 1 until MIN_VALID_FILE_SIZE &&
+                resolvedMime.startsWith("text/") &&
+                !finalFileName.endsWith(".txt", ignoreCase = true)
+            ) {
                 throw IllegalStateException("Download payload looks incomplete")
             }
 
             AppRepositories.postDownloadProgress(fileId = fileId, percent = 100, localUri = path)
-            showDownloadNotification(fileId, finalFileName ?: fileId, 100, inProgress = false)
+            showDownloadNotification(fileId, finalFileName, 100, inProgress = false)
             path
         }.onFailure {
             AppRepositories.postDownloadProgress(fileId = fileId, percent = 0, error = "download_failed")
@@ -360,6 +393,60 @@ class MediaRepositoryImpl(
         return ContentRangeInfo(start = start, endInclusive = end, total = total)
     }
 
+    private fun resolveMimeType(requested: String, detected: String): String {
+        val requestedClean = requested.substringBefore(';').trim().lowercase()
+        val detectedClean = detected.substringBefore(';').trim().lowercase()
+        if (detectedClean.isNotBlank() && detectedClean != "application/octet-stream") {
+            if (requestedClean in setOf("", "application/octet-stream", "text/plain", "binary/octet-stream")) {
+                return detectedClean
+            }
+            if (requestedClean.startsWith("text/") && !detectedClean.startsWith("text/")) {
+                return detectedClean
+            }
+        }
+        return requestedClean.ifBlank {
+            detectedClean.ifBlank { "application/octet-stream" }
+        }
+    }
+
+    private fun chooseFileName(provided: String?, detected: String): String {
+        val providedClean = provided?.trim().orEmpty()
+        val detectedClean = detected.trim()
+        if (detectedClean.isNotBlank() && !detectedClean.equals("download", ignoreCase = true)) {
+            if (providedClean.isBlank()) return detectedClean
+            val providedHasTextExt = providedClean.endsWith(".txt", ignoreCase = true)
+            val detectedHasKnownExt = detectedClean.contains('.') && !detectedClean.endsWith(".txt", ignoreCase = true)
+            if (providedHasTextExt && detectedHasKnownExt) {
+                return detectedClean
+            }
+        }
+        return providedClean.ifBlank { detectedClean.ifBlank { "download.bin" } }
+    }
+
+    private fun isLikelyHtmlResponse(contentType: String): Boolean {
+        val lower = contentType.lowercase()
+        return lower.contains("text/html") || lower.contains("application/xhtml+xml")
+    }
+
+    private fun extractRedirectUrlFromHtml(html: String, baseUrl: String): String? {
+        if (html.isBlank()) return null
+
+        val directUrlRegex = Regex(
+            """https?:\/\/[^\s"'<>\\]+""",
+            setOf(RegexOption.IGNORE_CASE),
+        )
+        val escapedUrlRegex = Regex(
+            """https?:\\\/\\\/[^\s"'<>\\]+""",
+            setOf(RegexOption.IGNORE_CASE),
+        )
+
+        val candidate = directUrlRegex.find(html)?.value
+            ?: escapedUrlRegex.find(html)?.value?.replace("\\/", "/")
+            ?: return null
+
+        return runCatching { URL(URL(baseUrl), candidate).toString() }.getOrNull()
+    }
+
     private fun isLikelySegmentRequest(url: String): Boolean {
         val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return false
         val keys = uri.queryParameterNames.map { it.lowercase() }.toSet()
@@ -457,6 +544,7 @@ class MediaRepositoryImpl(
         private const val CONNECT_TIMEOUT_MS = 30_000
         private const val READ_TIMEOUT_MS = 60_000
         private const val MAX_REDIRECTS = 8
+        private const val MAX_HTML_SNIFF = 128 * 1024
         private const val DOWNLOAD_CHANNEL_ID = "flygram_downloads"
         private const val MIN_VALID_FILE_SIZE = 2048L
         private const val SEGMENT_PENDING_TOKEN = "__segment_pending__"

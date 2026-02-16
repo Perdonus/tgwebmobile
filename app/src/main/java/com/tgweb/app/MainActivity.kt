@@ -79,6 +79,8 @@ class MainActivity : ComponentActivity() {
     private val offlineArchiveFile by lazy { File(cacheDir, OFFLINE_ARCHIVE_FILE_NAME) }
     private val authLogoDataUri by lazy { buildAuthLogoDataUri() }
     private var attemptedOfflineFallback: Boolean = false
+    private var lastProxySheetUrl: String = ""
+    private var lastProxySheetTsMs: Long = 0L
 
     private val runtimePrefs by lazy {
         getSharedPreferences(KeepAliveService.PREFS, Context.MODE_PRIVATE)
@@ -315,7 +317,7 @@ class MainActivity : ComponentActivity() {
                     handleAuthHandoff(uri)
                     return true
                 }
-                if (ProxyLinkParser.parse(uri) != null) {
+                if (ProxyLinkParser.parse(uri) != null || isTelegramProxyHttpLink(uri)) {
                     showProxyBottomSheet(uri.toString())
                     return true
                 }
@@ -361,6 +363,14 @@ class MainActivity : ComponentActivity() {
         }
 
         webView.setDownloadListener { url, _, contentDisposition, mimeType, _ ->
+            if (url.isNullOrBlank()) return@setDownloadListener
+            val uri = runCatching { Uri.parse(url) }.getOrNull()
+            val scheme = uri?.scheme?.lowercase().orEmpty()
+            if (scheme.isNotBlank() && scheme !in setOf("http", "https")) {
+                Toast.makeText(this, "Download link is not supported in native cache: $scheme", Toast.LENGTH_SHORT).show()
+                return@setDownloadListener
+            }
+
             val fileName = URLUtil.guessFileName(url, contentDisposition, mimeType)
             val stableFileId = buildStableDownloadFileId(url, fileName)
             AppRepositories.webBridge.onFromWeb(
@@ -371,6 +381,7 @@ class MainActivity : ComponentActivity() {
                         "url" to url,
                         "mime" to (mimeType ?: "application/octet-stream"),
                         "name" to fileName,
+                        "contentDisposition" to (contentDisposition ?: ""),
                         "export" to "false",
                         "targetCollection" to "flygram_downloads",
                     ),
@@ -550,7 +561,16 @@ class MainActivity : ComponentActivity() {
 
     private fun showProxyBottomSheet(raw: String?) {
         if (raw.isNullOrBlank()) return
-        val normalized = raw.replace("&amp;", "&").trim()
+        val normalized = raw
+            .replace("&amp;", "&")
+            .trim()
+            .trimEnd('.', ',', ';', ')', ']', '>')
+        val now = SystemClock.elapsedRealtime()
+        if (normalized == lastProxySheetUrl && (now - lastProxySheetTsMs) < 1_200L) {
+            return
+        }
+        lastProxySheetUrl = normalized
+        lastProxySheetTsMs = now
         val parsed = ProxyLinkParser.parse(normalized)
             ?: ProxyLinkParser.parse(Uri.decode(normalized))
             ?: return
@@ -702,8 +722,27 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun openAuthorChannel() {
-        val channelUrl = "${REMOTE_WEBK_URL}#@plugin_ai"
-        webView.loadUrl(channelUrl)
+        val channelHash = "@plugin_ai"
+        val channelUrl = "${REMOTE_WEBK_URL}#$channelHash"
+        val script = """
+            (function() {
+              try {
+                location.hash = '${channelHash}';
+                return true;
+              } catch (e) {
+                return false;
+              }
+            })();
+        """.trimIndent()
+        runCatching {
+            webView.evaluateJavascript(script) { result ->
+                if (!result.equals("true", ignoreCase = true)) {
+                    webView.loadUrl(channelUrl)
+                }
+            }
+        }.onFailure {
+            webView.loadUrl(channelUrl)
+        }
     }
 
     private fun openSessionTools(mode: String? = null) {
@@ -757,6 +796,15 @@ class MainActivity : ComponentActivity() {
     private fun decodeEvaluateJavascriptResult(raw: String?): String? {
         if (raw.isNullOrBlank() || raw == "null") return null
         return runCatching { JSONArray("[$raw]").getString(0) }.getOrNull()
+    }
+
+    private fun isTelegramProxyHttpLink(uri: Uri): Boolean {
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme != "http" && scheme != "https") return false
+        val host = uri.host?.lowercase().orEmpty()
+        if (host !in setOf("t.me", "telegram.me", "www.t.me", "www.telegram.me")) return false
+        val path = uri.path?.lowercase().orEmpty()
+        return path.startsWith("/proxy") || path.startsWith("/socks")
     }
 
     private fun buildStableDownloadFileId(url: String, fileName: String): String {
@@ -1106,23 +1154,60 @@ class MainActivity : ComponentActivity() {
 
               var replaceVisibleBranding = function() {
                 if (document.title && document.title.toLowerCase().indexOf('telegram') >= 0) {
-                  document.title = document.title.replace(/telegram/gi, 'FlyGram');
+                  document.title = document.title
+                    .replace(/telegram web/gi, 'FlyGram')
+                    .replace(/telegram/gi, 'FlyGram');
                 }
+
+                var replaceString = function(value) {
+                  if (!value) { return value; }
+                  return String(value)
+                    .replace(/telegram web/gi, 'FlyGram')
+                    .replace(/telegram/gi, 'FlyGram');
+                };
+
+                var replaceInTextNodes = function(root) {
+                  if (!root || !document.createTreeWalker) { return; }
+                  var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+                  var node = walker.nextNode();
+                  while (node) {
+                    var parent = node.parentElement;
+                    if (parent && !parent.closest('.bubble,.message,.text-content,[data-mid]')) {
+                      var value = String(node.nodeValue || '');
+                      if (/telegram/i.test(value) && value.length <= 180) {
+                        node.nodeValue = replaceString(value);
+                      }
+                    }
+                    node = walker.nextNode();
+                  }
+                };
+
                 var containers = [
                   document.getElementById('auth-pages'),
                   document.querySelector('.auth-pages'),
                   document.querySelector('.login-page'),
+                  document.querySelector('.page-signIn'),
+                  document.querySelector('.page-signQR'),
+                  document.querySelector('.page-signUp'),
                   document.querySelector('.left-header'),
                 ].filter(Boolean);
                 containers.forEach(function(root) {
+                  replaceInTextNodes(root);
                   root.querySelectorAll('h1,h2,h3,.title,.subtitle,button,span,div').forEach(function(node) {
                     if (!node || !node.childNodes || node.childNodes.length !== 1) { return; }
                     var text = String(node.textContent || '').trim();
                     if (!text) { return; }
                     if (/telegram/i.test(text) && text.length <= 120) {
-                      node.textContent = text
-                        .replace(/telegram web/gi, 'FlyGram')
-                        .replace(/telegram/gi, 'FlyGram');
+                      node.textContent = replaceString(text);
+                    }
+                  });
+                });
+
+                document.querySelectorAll('[aria-label],[title],[placeholder]').forEach(function(node) {
+                  ['aria-label', 'title', 'placeholder'].forEach(function(attr) {
+                    var value = node.getAttribute && node.getAttribute(attr);
+                    if (value && /telegram/i.test(value)) {
+                      node.setAttribute(attr, replaceString(value));
                     }
                   });
                 });
@@ -1141,7 +1226,7 @@ class MainActivity : ComponentActivity() {
                 var isDividers = custom.containerStyle === 'dividers';
                 var rowCss = isDividers
                   ? 'margin:0 !important;border-radius:0 !important;border:0 !important;min-height:48px !important;'
-                  : 'margin:6px 10px !important;border-radius:14px !important;border:1px solid var(--flygram-divider) !important;';
+                  : 'margin:3px 8px !important;border-radius:14px !important;border:1px solid var(--flygram-divider) !important;';
                 var groupsCss = isDividers
                   ? 'margin:8px 10px !important;border-radius:16px !important;border:1px solid var(--flygram-divider) !important;overflow:hidden !important;background:var(--flygram-container) !important;'
                   : 'margin:0 !important;border:0 !important;border-radius:0 !important;overflow:visible !important;background:transparent !important;';
@@ -1210,11 +1295,25 @@ class MainActivity : ComponentActivity() {
               };
 
               var removeMoreMenuEntry = function() {
-                document.querySelectorAll('.btn-menu-item,.menu-item,.row').forEach(function(node) {
-                  var labelNode = node.querySelector ? node.querySelector('.btn-menu-item-text,.row-title,.title') : null;
-                  var text = String((labelNode ? labelNode.textContent : node.textContent) || '').trim().toLowerCase();
-                  if (text === 'ещё' || text === 'more' || text === 'еще') {
-                    hideNode(node.closest('.btn-menu-item,.menu-item,.row') || node);
+                document.querySelectorAll('.btn-menu-item,.menu-item,.row,button,div').forEach(function(node) {
+                  if (!node || !node.closest) { return; }
+                  var menuScope = node.closest('.btn-menu,.left-sidebar,.sidebar-left,.btn-menu-items,.sidebar-tools-menu,.menu');
+                  if (!menuScope) { return; }
+
+                  var labelNode = node.querySelector ? node.querySelector('.btn-menu-item-text,.row-title,.title,.subtitle') : null;
+                  var rawText = String((labelNode ? labelNode.textContent : node.textContent) || '');
+                  var text = rawText.replace(/\s+/g, ' ').trim().toLowerCase();
+                  var iconNode = node.querySelector ? node.querySelector('.tgico-more,[class*=\"tgico-more\"],[data-icon=\"more\"]') : null;
+                  var dataTab = String(
+                    (node.getAttribute && (node.getAttribute('data-tab') || node.getAttribute('data-peer') || '')) ||
+                    ''
+                  ).toLowerCase();
+
+                  var isExactMoreLabel = text === 'ещё' || text === 'еще' || text === 'more';
+                  var isMoreIcon = !!iconNode;
+                  var isMoreTab = dataTab === 'more';
+                  if (isExactMoreLabel || isMoreIcon || isMoreTab) {
+                    hideNode(node.closest('.btn-menu-item,.menu-item,.row,button,div') || node);
                   }
                 });
               };
@@ -1272,7 +1371,7 @@ class MainActivity : ComponentActivity() {
                   e.stopPropagation();
                   send('${BridgeCommandTypes.OPEN_AUTHOR_CHANNEL}', { username: 'plugin_ai' });
                   try {
-                    location.href = '${REMOTE_WEBK_URL}#@plugin_ai';
+                    location.hash = '@plugin_ai';
                   } catch (_) {}
                 };
 
@@ -1338,45 +1437,61 @@ class MainActivity : ComponentActivity() {
 
               var ensureAuthImportButtons = function() {
                 var authPages = document.getElementById('auth-pages') ||
-                  document.querySelector('.auth-pages, .login-page, [class*=\"loginPage\"], [class*=\"pageSign\"]');
+                  document.querySelector(
+                    '.auth-pages, .login-page, [class*=\"auth-pages\"], [class*=\"loginPage\"], ' +
+                    '[class*=\"pageSign\"], .page-signIn, .page-signQR, .page-signUp, .page-authCode, .page-password'
+                  );
+                var authHints = document.querySelector(
+                  'input[type=\"tel\"], input[name*=\"phone\"], input[autocomplete*=\"one-time\"], .qr-canvas, .auth-code-input'
+                );
+                var mainUiVisible = !!document.querySelector(
+                  '.left-sidebar .chatlist-container, .chatlist-container, .chat-main .bubbles, .chat-input .input-message-input'
+                );
+                var isAuthMode = !!authPages || (!!authHints && !mainUiVisible);
+
+                var existing = document.querySelector('.tgweb-auth-import-actions');
+                var existingBranding = document.querySelector('.flygram-auth-branding');
+                if (!isAuthMode) {
+                  if (existing) { existing.remove(); }
+                  if (existingBranding) { existingBranding.remove(); }
+                  return;
+                }
+
                 var authPage = authPages && authPages.querySelector
                   ? authPages.querySelector(
                     '.page.active, .page-signIn, .page-signQR, .page-signUp, .page-authCode, .page-password, ' +
                     '.page-sign-in, .page-sign-up, [class*=\"page-sign\"], [class*=\"sign\"]'
                   )
                   : null;
-                var existing = document.querySelector('.tgweb-auth-import-actions');
-                var existingBranding = document.querySelector('.flygram-auth-branding');
-                if (!authPages) {
-                  if (existing) { existing.remove(); }
-                  if (existingBranding) { existingBranding.remove(); }
-                  return;
-                }
-
-                var isVisible = window.getComputedStyle(authPages).display !== 'none';
-                if (!isVisible) {
-                  if (existing) { existing.remove(); }
-                  if (existingBranding) { existingBranding.remove(); }
-                  return;
-                }
-
-                if (existing) { return; }
 
                 var target = (authPage && authPage.querySelector && authPage.querySelector('.container')) ||
-                  authPages.querySelector('.container, .scrollable-content, .tabs-container, .auth-placeholder') ||
-                  authPages;
-                if (!target) { return; }
+                  (authPages && authPages.querySelector && authPages.querySelector('.container, .scrollable-content, .tabs-container, .auth-placeholder')) ||
+                  authPages ||
+                  document.body;
+                var useFloating = target === document.body;
 
-                var branding = document.querySelector('.flygram-auth-branding');
-                if (!branding) {
-                  branding = document.createElement('div');
-                  branding.className = 'flygram-auth-branding';
-                  branding.style.display = 'flex';
-                  branding.style.flexDirection = 'column';
-                  branding.style.alignItems = 'center';
-                  branding.style.gap = '8px';
-                  branding.style.margin = '6px auto 12px';
+                var branding = existingBranding || document.createElement('div');
+                branding.className = 'flygram-auth-branding';
+                branding.style.display = 'flex';
+                branding.style.flexDirection = 'column';
+                branding.style.alignItems = 'center';
+                branding.style.gap = '8px';
+                branding.style.margin = useFloating ? '0' : '6px auto 12px';
+                branding.style.pointerEvents = 'none';
+                branding.style.zIndex = '28';
+                if (useFloating) {
+                  branding.style.position = 'fixed';
+                  branding.style.top = '20px';
+                  branding.style.left = '50%';
+                  branding.style.transform = 'translateX(-50%)';
+                } else {
+                  branding.style.position = 'relative';
+                  branding.style.top = '';
+                  branding.style.left = '';
+                  branding.style.transform = '';
+                }
 
+                if (!branding.querySelector('img')) {
                   var logo = document.createElement('img');
                   logo.alt = 'FlyGram';
                   logo.style.width = '74px';
@@ -1402,25 +1517,41 @@ class MainActivity : ComponentActivity() {
                   branding.appendChild(logo);
                   branding.appendChild(title);
                   branding.appendChild(subtitle);
+                }
+
+                if (!branding.parentElement || branding.parentElement !== target) {
                   target.insertBefore(branding, target.firstChild || null);
                 }
 
-                var wrap = document.createElement('div');
+                var wrap = existing || document.createElement('div');
                 wrap.className = 'tgweb-auth-import-actions';
                 wrap.style.display = 'flex';
                 wrap.style.flexDirection = 'column';
                 wrap.style.gap = '8px';
                 wrap.style.width = '100%';
-                wrap.style.maxWidth = '300px';
-                wrap.style.margin = '18px auto 0';
-                wrap.style.zIndex = '15';
+                wrap.style.maxWidth = '320px';
+                wrap.style.zIndex = '30';
+
+                if (useFloating) {
+                  wrap.style.position = 'fixed';
+                  wrap.style.left = '50%';
+                  wrap.style.bottom = '20px';
+                  wrap.style.transform = 'translateX(-50%)';
+                  wrap.style.margin = '0';
+                } else {
+                  wrap.style.position = 'relative';
+                  wrap.style.left = '';
+                  wrap.style.bottom = '';
+                  wrap.style.transform = '';
+                  wrap.style.margin = '18px auto 0';
+                }
 
                 var makeButton = function(text, mode) {
                   var btn = document.createElement('button');
                   btn.type = 'button';
                   btn.textContent = text;
                   btn.style.width = '100%';
-                  btn.style.height = '38px';
+                  btn.style.height = '40px';
                   btn.style.border = '0';
                   btn.style.borderRadius = '10px';
                   btn.style.padding = '0 12px';
@@ -1437,10 +1568,13 @@ class MainActivity : ComponentActivity() {
                   return btn;
                 };
 
+                wrap.innerHTML = '';
                 wrap.appendChild(makeButton('Импортировать Session', '${SessionToolsActivity.ACTION_IMPORT_SESSION}'));
                 wrap.appendChild(makeButton('Импортировать tdata', '${SessionToolsActivity.ACTION_IMPORT_TDATA}'));
 
-                target.appendChild(wrap);
+                if (!wrap.parentElement || wrap.parentElement !== target) {
+                  target.appendChild(wrap);
+                }
               };
 
               var bindProxyLinkIntercept = function() {
@@ -1454,7 +1588,9 @@ class MainActivity : ComponentActivity() {
                   if (normalized.indexOf('/proxy?') === 0 || normalized.indexOf('/socks?') === 0) {
                     href = 'https://t.me' + href;
                   }
-                  return href.replace(/&amp;/g, '&');
+                  return href
+                    .replace(/&amp;/g, '&')
+                    .replace(/[\])>,.;]+$/g, '');
                 };
 
                 var isProxyHref = function(href) {
@@ -1476,6 +1612,7 @@ class MainActivity : ComponentActivity() {
                 var proxyRegex = /(tg:\/\/(?:proxy|socks)\?[^\\s<>'\"]+|https?:\/\/(?:t\\.me|telegram\\.me)\/(?:proxy|socks)\?[^\\s<>'\"]+)/i;
                 var lastProxyUrl = '';
                 var lastProxyTs = 0;
+                var suppressUntilTs = 0;
 
                 var extractProxyUrl = function(target) {
                   if (!target) { return ''; }
@@ -1493,23 +1630,47 @@ class MainActivity : ComponentActivity() {
                   return '';
                 };
 
-                var handleProxyEvent = function(event) {
-                  var target = event && event.target;
-                  var href = extractProxyUrl(target);
-                  if (!href) { return; }
-                  var now = Date.now();
-                  if (href === lastProxyUrl && (now - lastProxyTs) < 350) { return; }
-                  lastProxyUrl = href;
-                  lastProxyTs = now;
+                var consumeEvent = function(event) {
                   event.preventDefault();
                   event.stopPropagation();
                   if (event.stopImmediatePropagation) {
                     event.stopImmediatePropagation();
                   }
+                };
+
+                var notifyProxy = function(event, href) {
+                  if (!href) { return; }
+                  var now = Date.now();
+                  if (href === lastProxyUrl && (now - lastProxyTs) < 1200) { return; }
+                  lastProxyUrl = href;
+                  lastProxyTs = now;
                   send('${BridgeCommandTypes.OPEN_PROXY_PREVIEW}', { url: href });
                 };
 
-                ['click', 'touchend', 'pointerup'].forEach(function(type) {
+                var handleProxyEvent = function(event) {
+                  var now = Date.now();
+                  var href = extractProxyUrl(event && event.target);
+                  if (!href) {
+                    if (now < suppressUntilTs && (event.type === 'click' || event.type === 'touchend' || event.type === 'pointerup')) {
+                      consumeEvent(event);
+                    }
+                    return;
+                  }
+
+                  if (event.type === 'pointerdown' || event.type === 'touchstart' || event.type === 'mousedown') {
+                    suppressUntilTs = now + 1200;
+                    consumeEvent(event);
+                    notifyProxy(event, href);
+                    return;
+                  }
+
+                  if (now < suppressUntilTs || event.type === 'click' || event.type === 'touchend' || event.type === 'pointerup') {
+                    consumeEvent(event);
+                    notifyProxy(event, href);
+                  }
+                };
+
+                ['pointerdown', 'touchstart', 'mousedown', 'click', 'touchend', 'pointerup'].forEach(function(type) {
                   document.addEventListener(type, handleProxyEvent, true);
                 });
               };
@@ -1680,9 +1841,12 @@ class MainActivity : ComponentActivity() {
                 touchStartY = e.touches[0].clientY;
                 touchStartTs = Date.now();
                 edgeGestureIntent = '';
-                if (touchStartX >= (window.innerWidth - 28) && isDialogScreenActive() && !isSettingsLikeOpen()) {
+                var target = e.target;
+                var inDialogHeader = !!(target && target.closest && target.closest('.chat-topbar,.topbar,.chat-info-container .sidebar-header'));
+                var inMainHeader = !!(target && target.closest && target.closest('.left-header,.left-sidebar .topbar'));
+                if ((touchStartX >= (window.innerWidth - 40) || inDialogHeader) && isDialogScreenActive() && !isSettingsLikeOpen()) {
                   edgeGestureIntent = 'close-chat';
-                } else if (touchStartX <= 28 && isMainListScreen()) {
+                } else if ((touchStartX <= 36 || (inMainHeader && touchStartX <= 120)) && isMainListScreen()) {
                   edgeGestureIntent = 'open-menu';
                 }
               }, { passive: false, capture: true });
@@ -1753,15 +1917,18 @@ class MainActivity : ComponentActivity() {
                 var isFastLongSwipe = absDx >= 112 && dt <= 360 && speed >= 0.30;
                 if (!isFastLongSwipe) { return; }
 
-                var fromRightEdge = touchStartX >= (window.innerWidth - 28);
-                if (edgeGestureIntent === 'close-chat' && dx < 0 && fromRightEdge && isDialogScreenActive()) {
+                var endTarget = e.target;
+                var fromRightEdge = touchStartX >= (window.innerWidth - 40);
+                var fromDialogHeader = !!(endTarget && endTarget.closest && endTarget.closest('.chat-topbar,.topbar,.chat-info-container .sidebar-header'));
+                if (edgeGestureIntent === 'close-chat' && dx < 0 && (fromRightEdge || fromDialogHeader) && isDialogScreenActive()) {
                   if (closeActiveChatIfPossible()) {
                     return;
                   }
                 }
 
-                var fromLeftEdge = touchStartX <= 28;
-                if (edgeGestureIntent === 'open-menu' && dx > 0 && fromLeftEdge && isMainListScreen()) {
+                var fromLeftEdge = touchStartX <= 36;
+                var fromMainHeader = !!(endTarget && endTarget.closest && endTarget.closest('.left-header,.left-sidebar .topbar')) && touchStartX <= 120;
+                if (edgeGestureIntent === 'open-menu' && dx > 0 && (fromLeftEdge || fromMainHeader) && isMainListScreen()) {
                   openMainMenuFromSwipe();
                 }
               }, { passive: false, capture: true });

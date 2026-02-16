@@ -40,11 +40,14 @@ class AndroidNotificationService(
 
     override suspend fun registerDeviceToken(fcmToken: String) {
         if (backendBaseUrl.isBlank()) return
+        val appVersion = runCatching {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName
+        }.getOrDefault("unknown")
         val body = JSONObject()
             .put("userId", 0)
             .put("deviceId", deviceId)
             .put("fcmToken", fcmToken)
-            .put("appVersion", "0.1.0")
+            .put("appVersion", appVersion)
             .put("locale", context.resources.configuration.locales[0].toLanguageTag())
             .put("capabilities", listOf("webk", "offline_r1", "proxy", "background_push"))
             .toString()

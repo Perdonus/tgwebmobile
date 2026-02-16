@@ -22,7 +22,10 @@ object ProxyLinkParser {
 
     fun parse(raw: String?): ProxyConfigSnapshot? {
         if (raw.isNullOrBlank()) return null
-        val normalized = raw.trim()
+        val normalized = raw
+            .trim()
+            .replace("&amp;", "&")
+            .trimEnd('.', ',', ';', ')', ']', '>')
         return runCatching { Uri.parse(normalized) }
             .getOrNull()
             ?.let { parseInternal(it, normalized) }

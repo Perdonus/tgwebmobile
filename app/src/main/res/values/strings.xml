@@ -15,6 +15,11 @@
     <string name="mod_push_permission_title">Разрешение на уведомления</string>
     <string name="mod_push_permission_granted">Разрешено</string>
     <string name="mod_push_permission_missing">Не выдано</string>
+    <string name="mod_push_backend_title">Push backend URL</string>
+    <string name="mod_push_backend_summary_missing">Не задан. Без backend фоновые push не придут.</string>
+    <string name="mod_push_backend_summary">Текущий backend: %1$s</string>
+    <string name="mod_push_backend_hint">https://your-domain.example</string>
+    <string name="mod_push_backend_saved">Push backend сохранён</string>
 
     <string name="mod_proxy_title">Прокси</string>
     <string name="mod_proxy_summary">HTTP, SOCKS5, MTProto, импорт tg:// и t.me ссылок</string>
