@@ -1,42 +1,102 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:padding="16dp">
+    android:layout_height="match_parent">
 
-    <TextView
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="@string/customization_hint"
-        android:textSize="14sp" />
+        android:orientation="vertical"
+        android:padding="16dp">
 
-    <Switch
-        android:id="@+id/customMd3Switch"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="14dp"
-        android:text="@string/custom_md3_effects" />
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/customization_hint"
+            android:textSize="14sp" />
 
-    <TextView
-        android:id="@+id/customContainerStyleTitle"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="12dp"
-        android:text="@string/custom_container_style"
-        android:textStyle="bold" />
+        <Switch
+            android:id="@+id/customMd3Switch"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:text="@string/custom_md3_effects" />
 
-    <Spinner
-        android:id="@+id/customContainerStyleSpinner"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="6dp" />
+        <TextView
+            android:id="@+id/customContainerStyleTitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="@string/custom_container_style"
+            android:textStyle="bold" />
 
-    <Switch
-        android:id="@+id/customDynamicColorSwitch"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="10dp"
-        android:text="@string/custom_dynamic_color" />
+        <Spinner
+            android:id="@+id/customContainerStyleSpinner"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp" />
 
-</LinearLayout>
+        <Switch
+            android:id="@+id/customMd3HideBasePlatesSwitch"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:text="@string/custom_md3_hide_base_plates" />
+
+        <Switch
+            android:id="@+id/customDynamicColorSwitch"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:text="@string/custom_dynamic_color" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:text="@string/custom_sidebar_menu_title"
+            android:textStyle="bold" />
+
+        <Switch
+            android:id="@+id/customMenuShowModSettingsSwitch"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/custom_menu_show_mod_settings" />
+
+        <Switch
+            android:id="@+id/customMenuShowDownloadsSwitch"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:text="@string/custom_menu_show_downloads" />
+
+        <TextView
+            android:id="@+id/customMenuDownloadsPositionTitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/custom_menu_downloads_position"
+            android:textStyle="bold" />
+
+        <Spinner
+            android:id="@+id/customMenuDownloadsPositionSpinner"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp" />
+
+        <Switch
+            android:id="@+id/customMenuShowDividersSwitch"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/custom_menu_show_dividers" />
+
+        <Switch
+            android:id="@+id/customMenuHideMoreSwitch"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:text="@string/custom_menu_hide_more" />
+    </LinearLayout>
+</ScrollView>

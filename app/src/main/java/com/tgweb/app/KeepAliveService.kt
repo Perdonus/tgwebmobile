@@ -75,6 +75,12 @@ class KeepAliveService : Service() {
         const val KEY_MD3_EFFECTS = "md3_effects"
         const val KEY_DYNAMIC_COLOR = "dynamic_color"
         const val KEY_MD3_CONTAINER_STYLE = "md3_container_style"
+        const val KEY_MD3_HIDE_BASE_PLATES = "md3_hide_base_plates"
+        const val KEY_MENU_HIDE_MORE = "menu_hide_more"
+        const val KEY_MENU_SHOW_DOWNLOADS = "menu_show_downloads"
+        const val KEY_MENU_SHOW_MOD_SETTINGS = "menu_show_mod_settings"
+        const val KEY_MENU_SHOW_DIVIDERS = "menu_show_dividers"
+        const val KEY_MENU_DOWNLOADS_POSITION = "menu_downloads_position"
         const val KEY_PENDING_WEB_RELOAD = "pending_web_reload"
 
         private const val CHANNEL_ID = "tgweb_keep_alive"

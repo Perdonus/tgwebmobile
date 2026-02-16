@@ -78,6 +78,7 @@ object BridgeCommandTypes {
     const val OPEN_SESSION_TOOLS = "OPEN_SESSION_TOOLS"
     const val OPEN_PROXY_PREVIEW = "OPEN_PROXY_PREVIEW"
     const val OPEN_AUTHOR_CHANNEL = "OPEN_AUTHOR_CHANNEL"
+    const val WEB_UI_READY = "WEB_UI_READY"
 }
 
 object BridgeEventTypes {

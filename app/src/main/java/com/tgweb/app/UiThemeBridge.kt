@@ -36,7 +36,7 @@ object UiThemeBridge {
 
     fun resolveSettingsSurfaceColor(activity: Activity): Int {
         val useDynamic = activity.getSharedPreferences(KeepAliveService.PREFS, Activity.MODE_PRIVATE)
-            .getBoolean(KeepAliveService.KEY_DYNAMIC_COLOR, true)
+            .getBoolean(KeepAliveService.KEY_DYNAMIC_COLOR, false)
         return if (useDynamic) readDynamicSurfaceColor(activity) else readSurfaceColor(activity)
     }
 

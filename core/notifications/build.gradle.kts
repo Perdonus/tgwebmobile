@@ -11,7 +11,7 @@ android {
         minSdk = 28
         consumerProguardFiles("consumer-rules.pro")
         buildConfigField("String", "DEFAULT_PUSH_BACKEND_URL", "\"https://sosiskibot.ru/flygram/push\"")
-        buildConfigField("String", "DEFAULT_PUSH_BACKEND_FALLBACK_URL", "\"http://91.233.168.135:8081/flygram/push\"")
+        buildConfigField("String", "DEFAULT_PUSH_BACKEND_FALLBACK_URL", "\"\"")
         buildConfigField("String", "PUSH_SHARED_SECRET", "\"flygram_push_2026\"")
     }
 

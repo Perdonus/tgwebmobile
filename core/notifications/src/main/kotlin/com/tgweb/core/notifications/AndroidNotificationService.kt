@@ -8,6 +8,7 @@ import android.content.Intent
 import android.graphics.Color
 import android.os.Build
 import android.provider.Settings
+import android.security.NetworkSecurityPolicy
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.tgweb.core.data.AppRepositories
@@ -125,6 +126,7 @@ class AndroidNotificationService(
                 .onFailure { append("Device re-registration failed: ${it.message}") }
         } else {
             append("FCM token unavailable. Sending by known deviceId only.")
+            append("Note: until Firebase token exists on device, real push delivery is impossible.")
         }
 
         val messageId = System.currentTimeMillis().toString()
@@ -208,9 +210,16 @@ class AndroidNotificationService(
     private suspend fun postJsonWithTrace(path: String, body: String, tag: String): PostTrace {
         var lastTrace = PostTrace(success = false, url = "", code = null, responseBody = "", error = "No backend URLs")
         val proxyState = AppRepositories.getProxyState()
-        backendBaseUrls.forEach { base ->
+        for (base in backendBaseUrls) {
             val fullUrl = "$base$path"
             val startedAt = System.currentTimeMillis()
+            val scheme = runCatching { URL(fullUrl).protocol.lowercase() }.getOrDefault("")
+            val host = runCatching { URL(fullUrl).host }.getOrDefault("")
+            if (scheme == "http" && !NetworkSecurityPolicy.getInstance().isCleartextTrafficPermitted(host)) {
+                val reason = "Cleartext HTTP traffic to $host is not permitted by app network policy"
+                DebugLogStore.log(tag, "Skip $fullUrl: $reason")
+                continue
+            }
             val trace = runCatching {
                 val connection = openConnection(fullUrl, proxyState)
                 connection.requestMethod = "POST"

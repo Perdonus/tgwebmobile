@@ -1,5 +1,7 @@
 package com.tgweb.app
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.net.Uri
 import android.os.Bundle
 import android.text.InputType
@@ -40,6 +42,7 @@ class ProxySettingsActivity : AppCompatActivity() {
     private lateinit var proxyList: ListView
     private lateinit var addButton: Button
     private lateinit var importButton: Button
+    private lateinit var copyLogsButton: Button
     private lateinit var statusText: TextView
     private lateinit var adapter: ArrayAdapter<String>
 
@@ -69,6 +72,7 @@ class ProxySettingsActivity : AppCompatActivity() {
         proxyList = findViewById(R.id.proxyProfilesList)
         addButton = findViewById(R.id.proxyAddButton)
         importButton = findViewById(R.id.proxyImportFromLinkButton)
+        copyLogsButton = findViewById(R.id.proxyCopyLogsButton)
         statusText = findViewById(R.id.proxyListStatusText)
         adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, mutableListOf())
         proxyList.adapter = adapter
@@ -109,6 +113,11 @@ class ProxySettingsActivity : AppCompatActivity() {
 
         addButton.setOnClickListener { showProxyEditorDialog() }
         importButton.setOnClickListener { showImportLinkDialog() }
+        copyLogsButton.setOnClickListener {
+            val manager = getSystemService(ClipboardManager::class.java)
+            manager?.setPrimaryClip(ClipData.newPlainText("flygram-proxy-logs", DebugLogStore.dump()))
+            showToast(getString(R.string.proxy_logs_copied))
+        }
 
         proxyList.setOnItemClickListener { _, _, position, _ ->
             val profile = profiles.getOrNull(position) ?: return@setOnItemClickListener

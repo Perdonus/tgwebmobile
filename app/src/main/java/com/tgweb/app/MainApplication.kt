@@ -265,7 +265,7 @@ class MainApplication : Application() {
 
     companion object {
         private const val KEY_PROXY_STATE = "proxy_state"
-        private const val KEY_RUNTIME_DEFAULTS_MIGRATION_V2 = "runtime_defaults_migration_v2"
+        private const val KEY_RUNTIME_DEFAULTS_MIGRATION_V3 = "runtime_defaults_migration_v3"
     }
 
     private fun ensureRuntimeDefaults() {
@@ -273,11 +273,12 @@ class MainApplication : Application() {
         val editor = prefs.edit()
         var changed = false
 
-        // One-time migration for existing installs where these flags were persisted as false.
-        if (!prefs.getBoolean(KEY_RUNTIME_DEFAULTS_MIGRATION_V2, false)) {
+        // One-time migration to stable defaults:
+        // MD3 on, dynamic color off.
+        if (!prefs.getBoolean(KEY_RUNTIME_DEFAULTS_MIGRATION_V3, false)) {
             editor.putBoolean(KeepAliveService.KEY_MD3_EFFECTS, true)
-            editor.putBoolean(KeepAliveService.KEY_DYNAMIC_COLOR, true)
-            editor.putBoolean(KEY_RUNTIME_DEFAULTS_MIGRATION_V2, true)
+            editor.putBoolean(KeepAliveService.KEY_DYNAMIC_COLOR, false)
+            editor.putBoolean(KEY_RUNTIME_DEFAULTS_MIGRATION_V3, true)
             changed = true
         } else {
             if (!prefs.contains(KeepAliveService.KEY_MD3_EFFECTS)) {
@@ -285,12 +286,36 @@ class MainApplication : Application() {
                 changed = true
             }
             if (!prefs.contains(KeepAliveService.KEY_DYNAMIC_COLOR)) {
-                editor.putBoolean(KeepAliveService.KEY_DYNAMIC_COLOR, true)
+                editor.putBoolean(KeepAliveService.KEY_DYNAMIC_COLOR, false)
                 changed = true
             }
         }
         if (!prefs.contains(KeepAliveService.KEY_MD3_CONTAINER_STYLE)) {
             editor.putString(KeepAliveService.KEY_MD3_CONTAINER_STYLE, "segmented")
+            changed = true
+        }
+        if (!prefs.contains(KeepAliveService.KEY_MD3_HIDE_BASE_PLATES)) {
+            editor.putBoolean(KeepAliveService.KEY_MD3_HIDE_BASE_PLATES, false)
+            changed = true
+        }
+        if (!prefs.contains(KeepAliveService.KEY_MENU_HIDE_MORE)) {
+            editor.putBoolean(KeepAliveService.KEY_MENU_HIDE_MORE, true)
+            changed = true
+        }
+        if (!prefs.contains(KeepAliveService.KEY_MENU_SHOW_DOWNLOADS)) {
+            editor.putBoolean(KeepAliveService.KEY_MENU_SHOW_DOWNLOADS, true)
+            changed = true
+        }
+        if (!prefs.contains(KeepAliveService.KEY_MENU_SHOW_MOD_SETTINGS)) {
+            editor.putBoolean(KeepAliveService.KEY_MENU_SHOW_MOD_SETTINGS, true)
+            changed = true
+        }
+        if (!prefs.contains(KeepAliveService.KEY_MENU_SHOW_DIVIDERS)) {
+            editor.putBoolean(KeepAliveService.KEY_MENU_SHOW_DIVIDERS, false)
+            changed = true
+        }
+        if (!prefs.contains(KeepAliveService.KEY_MENU_DOWNLOADS_POSITION)) {
+            editor.putString(KeepAliveService.KEY_MENU_DOWNLOADS_POSITION, "end")
             changed = true
         }
         if (!prefs.contains(KeepAliveService.KEY_UI_SCALE_PERCENT)) {

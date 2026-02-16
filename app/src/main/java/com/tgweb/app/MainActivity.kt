@@ -317,12 +317,9 @@ class MainActivity : ComponentActivity() {
                 cacheCurrentMainFrameHtml(url)
                 injectBootstrap()
                 injectMobileEnhancements()
-                webUiReadyForProxy = true
-                val state = pendingProxyForApply ?: AppRepositories.getProxyState()
-                pendingProxyForApply = null
+                webUiReadyForProxy = false
                 DebugLogStore.log("WEB", "Page finished: ${url.orEmpty()}")
-                runCatching { applyProxyToWebView(state) }
-                    .onFailure { Log.w(TAG, "Unable to apply proxy on page finish", it) }
+                DebugLogStore.log("PROXY", "Waiting for WEB_UI_READY before applying proxy")
                 hideLoadingOverlayWithMinimumDuration()
             }
 
@@ -440,6 +437,7 @@ class MainActivity : ComponentActivity() {
                         BridgeCommandTypes.OPEN_SESSION_TOOLS -> openSessionTools(command.payload["mode"])
                         BridgeCommandTypes.OPEN_PROXY_PREVIEW -> showProxyBottomSheet(command.payload["url"])
                         BridgeCommandTypes.OPEN_AUTHOR_CHANNEL -> openAuthorChannel()
+                        BridgeCommandTypes.WEB_UI_READY -> onWebUiReady(command.payload)
                         BridgeCommandTypes.SET_PROXY -> handleProxyCommand(command)
                         BridgeCommandTypes.GET_PROXY_STATUS -> AppRepositories.postProxyState()
                         BridgeCommandTypes.SET_SYSTEM_UI_STYLE -> applySystemUiStyle(command.payload)
@@ -971,6 +969,27 @@ class MainActivity : ComponentActivity() {
         webView.evaluateJavascript(script, null)
     }
 
+    private fun onWebUiReady(payload: Map<String, String>) {
+        val href = payload["href"].orEmpty()
+        val mode = payload["mode"].orEmpty()
+        DebugLogStore.log("WEB", "WEB_UI_READY received: mode=$mode href=$href")
+        if (webUiReadyForProxy) return
+        webUiReadyForProxy = true
+
+        lifecycleScope.launch {
+            val state = pendingProxyForApply ?: AppRepositories.getProxyState()
+            pendingProxyForApply = null
+            runCatching { applyProxyToWebView(state) }
+                .onFailure { error ->
+                    Log.w(TAG, "Unable to apply proxy after WEB_UI_READY", error)
+                    DebugLogStore.log(
+                        "PROXY",
+                        "Apply after WEB_UI_READY failed: ${error::class.java.simpleName}: ${error.message}",
+                    )
+                }
+        }
+    }
+
     private fun setKeepAliveEnabled(rawEnabled: String?) {
         val enabled = rawEnabled?.equals("true", ignoreCase = true) == true
         KeepAliveService.setEnabled(this, enabled)
@@ -1091,9 +1110,17 @@ class MainActivity : ComponentActivity() {
     private fun injectMobileEnhancements() {
         val scale = currentScalePercent()
         val md3Effects = runtimePrefs.getBoolean(KeepAliveService.KEY_MD3_EFFECTS, true)
-        val dynamicColor = runtimePrefs.getBoolean(KeepAliveService.KEY_DYNAMIC_COLOR, true)
+        val dynamicColor = runtimePrefs.getBoolean(KeepAliveService.KEY_DYNAMIC_COLOR, false)
         val md3ContainerStyle = runtimePrefs
             .getString(KeepAliveService.KEY_MD3_CONTAINER_STYLE, "segmented")
+            .orEmpty()
+        val md3HideBasePlates = runtimePrefs.getBoolean(KeepAliveService.KEY_MD3_HIDE_BASE_PLATES, false)
+        val menuHideMore = runtimePrefs.getBoolean(KeepAliveService.KEY_MENU_HIDE_MORE, true)
+        val menuShowDownloads = runtimePrefs.getBoolean(KeepAliveService.KEY_MENU_SHOW_DOWNLOADS, true)
+        val menuShowModSettings = runtimePrefs.getBoolean(KeepAliveService.KEY_MENU_SHOW_MOD_SETTINGS, true)
+        val menuShowDividers = runtimePrefs.getBoolean(KeepAliveService.KEY_MENU_SHOW_DIVIDERS, false)
+        val menuDownloadsPosition = runtimePrefs
+            .getString(KeepAliveService.KEY_MENU_DOWNLOADS_POSITION, "end")
             .orEmpty()
         val authLogoQuoted = JSONObject.quote(authLogoDataUri)
         val md3Accent = if (dynamicColor) {
@@ -1110,9 +1137,22 @@ class MainActivity : ComponentActivity() {
                 hideStories: false,
                 md3Effects: ${if (md3Effects) "true" else "false"},
                 md3Accent: '${md3Accent}',
-                containerStyle: '${md3ContainerStyle}'
+                containerStyle: '${md3ContainerStyle}',
+                md3HideBasePlates: ${if (md3HideBasePlates) "true" else "false"},
+                menuHideMore: ${if (menuHideMore) "true" else "false"},
+                menuShowDownloads: ${if (menuShowDownloads) "true" else "false"},
+                menuShowModSettings: ${if (menuShowModSettings) "true" else "false"},
+                menuShowDividers: ${if (menuShowDividers) "true" else "false"},
+                menuDownloadsPosition: '${menuDownloadsPosition}'
               };
               var flygramAuthLogo = $authLogoQuoted;
+              var flygramAuthSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160" viewBox="0 0 160 160" aria-label="FlyGram Logo">' +
+                '<defs><linearGradient id="flygramGrad" x1="0" y1="0" x2="1" y2="1">' +
+                '<stop offset="0%" stop-color="#FFFFFF"/><stop offset="100%" stop-color="#EAF3FF"/>' +
+                '</linearGradient></defs>' +
+                '<path fill="url(#flygramGrad)" stroke="#36A8FF" stroke-width="3.2" stroke-linejoin="round" d="M12 86L143 36c4-2 8 2 7 6l-20 81c-1 5-7 7-11 4L86 104l-19 18c-4 4-10 1-10-4V95L16 80c-6-2-6-10-1-12z"/>' +
+                '<path fill="none" stroke="#36A8FF" stroke-width="3.2" stroke-linecap="round" d="M57 96l68-50M57 119l16-28"/>' +
+              '</svg>';
 
               var send = function(type, payload) {
                 try {
@@ -1430,14 +1470,26 @@ class MainActivity : ComponentActivity() {
                 var dividerColor = blendHex(rootBg, textColor, isLightTheme ? 0.16 : 0.24);
                 var accentColor = custom.md3Accent && custom.md3Accent.length === 7 ? custom.md3Accent : '#3390ec';
                 var isDividers = custom.containerStyle === 'dividers';
+                var hideBasePlates = !!custom.md3HideBasePlates;
                 var rowCss = isDividers
                   ? 'margin:0 !important;border-radius:0 !important;border:0 !important;min-height:48px !important;'
                   : 'margin:3px 8px !important;border-radius:14px !important;border:1px solid var(--flygram-divider) !important;';
-                var groupsCss = isDividers
+                var groupsCss = !hideBasePlates
+                  ? ''
+                  : (isDividers
                   ? 'margin:8px 10px !important;border-radius:16px !important;border:1px solid var(--flygram-divider) !important;overflow:hidden !important;background:var(--flygram-container) !important;'
-                  : 'margin:0 !important;border:0 !important;border-radius:0 !important;overflow:visible !important;background:transparent !important;';
+                  : 'margin:0 !important;border:0 !important;border-radius:0 !important;overflow:visible !important;background:transparent !important;');
                 var dividerRowsCss = isDividers
                   ? '.settings-container .row + .row,.btn-menu .btn-menu-item + .btn-menu-item,.menu-item + .menu-item,.profile-buttons .row + .row{border-top:1px solid var(--flygram-divider) !important;}'
+                  : '';
+                var groupsCssBlock = groupsCss
+                  ? '.settings-container .profile-buttons,.settings-container .list,.settings-container .sections,' +
+                    '.settings-container .content,.btn-menu .btn-menu-items,.btn-menu{' +
+                      groupsCss +
+                    '}'
+                  : '';
+                var rowBgCss = hideBasePlates
+                  ? 'background:var(--flygram-container) !important;'
                   : '';
 
                 var style = document.getElementById('tgweb-md3-patch');
@@ -1459,14 +1511,11 @@ class MainActivity : ComponentActivity() {
                     'background:var(--flygram-bg) !important;' +
                     'color:var(--flygram-text) !important;' +
                   '}' +
-                  '.settings-container .profile-buttons,.settings-container .list,.settings-container .sections,' +
-                  '.settings-container .content,.btn-menu .btn-menu-items,.btn-menu{' +
-                    groupsCss +
-                  '}' +
+                  groupsCssBlock +
                   '.settings-container .row,.settings-content .row,.profile-buttons .row,' +
                   '.btn-menu .btn-menu-item,.menu-item,.row.no-subtitle{' +
                     rowCss +
-                    'background:var(--flygram-container) !important;' +
+                    rowBgCss +
                     'color:var(--flygram-text) !important;' +
                   '}' +
                   '.settings-container .row-title,.settings-container .row-subtitle,' +
@@ -1501,6 +1550,7 @@ class MainActivity : ComponentActivity() {
               };
 
               var removeMoreMenuEntry = function() {
+                if (!custom.menuHideMore) { return; }
                 document.querySelectorAll('.btn-menu-item,.menu-item,.row,button,div').forEach(function(node) {
                   if (!node || !node.closest) { return; }
                   var menuScope = node.closest('.btn-menu,.left-sidebar,.sidebar-left,.btn-menu-items,.sidebar-tools-menu,.menu');
@@ -1527,7 +1577,12 @@ class MainActivity : ComponentActivity() {
               var ensureModSettingsEntry = function() {
                 var buttonsRoot = document.querySelector('.settings-container .profile-buttons');
                 if (!buttonsRoot) { return; }
-                if (buttonsRoot.querySelector('.tgweb-mod-settings-row')) { return; }
+                var existingRow = buttonsRoot.querySelector('.tgweb-mod-settings-row');
+                if (!custom.menuShowModSettings) {
+                  if (existingRow) { existingRow.remove(); }
+                  return;
+                }
+                if (existingRow) { return; }
 
                 var row = document.createElement('div');
                 row.className = 'row no-subtitle row-with-icon row-with-padding tgweb-mod-settings-row';
@@ -1596,7 +1651,19 @@ class MainActivity : ComponentActivity() {
               var ensureDownloadsButton = function() {
                 var header = document.querySelector('.left-header');
                 if (!header) { return; }
-                if (header.querySelector('.tgweb-downloads-button')) { return; }
+                var existing = header.querySelector('.tgweb-downloads-button');
+                if (!custom.menuShowDownloads) {
+                  if (existing) { existing.remove(); }
+                  return;
+                }
+                if (existing) {
+                  if (custom.menuDownloadsPosition === 'start') {
+                    header.insertBefore(existing, header.firstChild || null);
+                  } else {
+                    header.appendChild(existing);
+                  }
+                  return;
+                }
 
                 var button = document.createElement('button');
                 button.className = 'btn-icon tgweb-downloads-button';
@@ -1637,81 +1704,77 @@ class MainActivity : ComponentActivity() {
                 badge.style.justifyContent = 'center';
                 badge.textContent = '0';
                 button.appendChild(badge);
-                header.appendChild(button);
+                if (custom.menuDownloadsPosition === 'start') {
+                  header.insertBefore(button, header.firstChild || null);
+                } else {
+                  header.appendChild(button);
+                }
                 updateDownloadsBadge();
               };
 
+              var applySidebarMenuTweaks = function() {
+                var style = document.getElementById('tgweb-menu-patch');
+                if (!style) {
+                  style = document.createElement('style');
+                  style.id = 'tgweb-menu-patch';
+                  document.head.appendChild(style);
+                }
+                if (!custom.menuShowDividers) {
+                  style.textContent = '';
+                  return;
+                }
+                style.textContent =
+                  '.btn-menu .btn-menu-item + .btn-menu-item,' +
+                  '.sidebar-left .btn-menu-item + .btn-menu-item,' +
+                  '.left-sidebar .btn-menu-item + .btn-menu-item{' +
+                    'border-top:1px solid rgba(157,179,205,0.24) !important;' +
+                  '}';
+              };
+
               var ensureAuthImportButtons = function() {
-                var authPages = document.getElementById('auth-pages') ||
-                  document.querySelector(
-                    '.auth-pages, .login-page, [class*=\"auth-pages\"], [class*=\"loginPage\"], ' +
-                    '[class*=\"pageSign\"], .page-signIn, .page-signQR, .page-signUp, .page-authCode, .page-password'
-                  );
-                var authHints = document.querySelector(
-                  'input[type=\"tel\"], input[name*=\"phone\"], input[autocomplete*=\"one-time\"], .qr-canvas, .auth-code-input, ' +
-                  'input[type=\"password\"], [class*=\"auth-code\"], [class*=\"login\"], [class*=\"auth\"]'
+                var authRoot = document.getElementById('auth-pages') ||
+                  document.querySelector('.auth-pages,.login-page,[class*=\"auth-pages\"],.page-signIn,.page-signQR,.page-signUp,.page-authCode,.page-password');
+                var authInteractive = !!(authRoot && authRoot.querySelector &&
+                  authRoot.querySelector('input[type=\"tel\"],input[type=\"password\"],.qr-canvas,.auth-code-input,.sign-logo,.auth-image'));
+                var authVisible = !!(authRoot && authRoot.offsetParent !== null);
+                var mainUiVisible = !!document.querySelector(
+                  '.left-sidebar .chatlist .chatlist-chat,.chat-main .bubbles,.chat-input .input-message-input'
                 );
-                var chatInputVisible = !!document.querySelector('.chat-input .input-message-input, .chat-main .bubbles');
-                var chatListVisible = !!document.querySelector('.left-sidebar .chatlist-container .chatlist, .chatlist-container .chatlist');
-                var hash = String(location.hash || '').toLowerCase();
-                var hashLooksLikeDialog = hash.indexOf('@') >= 0 || hash.indexOf('/c/') >= 0 || hash.indexOf('-100') >= 0;
-                var isAuthMode = (!!authPages || !!authHints || !hashLooksLikeDialog) && !chatInputVisible && !chatListVisible;
+                var isAuthMode = (authVisible || authInteractive) && !mainUiVisible;
 
                 var existing = document.querySelector('.tgweb-auth-import-actions');
                 var existingBranding = document.querySelector('.flygram-auth-branding');
-                if (!isAuthMode) {
+                if (!isAuthMode || !authRoot) {
                   if (existing) { existing.remove(); }
                   if (existingBranding) { existingBranding.remove(); }
                   return;
                 }
 
-                var authPage = authPages && authPages.querySelector
-                  ? authPages.querySelector(
-                    '.page.active, .page-signIn, .page-signQR, .page-signUp, .page-authCode, .page-password, ' +
-                    '.page-sign-in, .page-sign-up, [class*=\"page-sign\"], [class*=\"sign\"]'
-                  )
-                  : null;
+                var authImage = authRoot.querySelector('.auth-image');
+                if (authImage) {
+                  authImage.innerHTML = flygramAuthSvg;
+                }
 
-                var target = (authPage && authPage.querySelector && authPage.querySelector('.container')) ||
-                  (authPages && authPages.querySelector && authPages.querySelector('.container, .scrollable-content, .tabs-container, .auth-placeholder')) ||
-                  authPages ||
-                  document.body;
-                var useFloating = target === document.body;
+                var authPage = authRoot.querySelector(
+                  '.page.active,.page-signIn,.page-signQR,.page-signUp,.page-authCode,.page-password,.page-sign-in,.page-sign-up,[class*=\"page-sign\"],[class*=\"sign\"]'
+                );
+                var target = (authPage && authPage.querySelector && authPage.querySelector('.container,.scrollable-content,.tabs-container,.auth-placeholder')) ||
+                  (authRoot.querySelector && authRoot.querySelector('.container,.scrollable-content,.tabs-container,.auth-placeholder')) ||
+                  authRoot;
+                if (!target) { return; }
 
                 var branding = existingBranding || document.createElement('div');
                 branding.className = 'flygram-auth-branding';
                 branding.style.display = 'flex';
                 branding.style.flexDirection = 'column';
                 branding.style.alignItems = 'center';
-                branding.style.gap = '8px';
-                branding.style.margin = useFloating ? '0' : '6px auto 12px';
+                branding.style.gap = '6px';
+                branding.style.margin = '4px auto 10px';
                 branding.style.pointerEvents = 'none';
-                branding.style.zIndex = '28';
-                if (useFloating) {
-                  branding.style.position = 'fixed';
-                  branding.style.top = '20px';
-                  branding.style.left = '50%';
-                  branding.style.transform = 'translateX(-50%)';
-                } else {
-                  branding.style.position = 'relative';
-                  branding.style.top = '';
-                  branding.style.left = '';
-                  branding.style.transform = '';
-                }
 
-                if (!branding.querySelector('img')) {
-                  var logo = document.createElement('img');
-                  logo.alt = 'FlyGram';
-                  logo.style.width = '74px';
-                  logo.style.height = '74px';
-                  logo.style.objectFit = 'contain';
-                  logo.style.borderRadius = '20px';
-                  logo.style.filter = 'drop-shadow(0 6px 14px rgba(51,144,236,.28))';
-                  if (flygramAuthLogo && flygramAuthLogo.length > 32) {
-                    logo.src = flygramAuthLogo;
-                  }
-
+                if (!branding.querySelector('.flygram-auth-branding-title')) {
                   var title = document.createElement('div');
+                  title.className = 'flygram-auth-branding-title';
                   title.textContent = 'FlyGram';
                   title.style.fontSize = '22px';
                   title.style.fontWeight = '700';
@@ -1722,7 +1785,6 @@ class MainActivity : ComponentActivity() {
                   subtitle.style.fontSize = '13px';
                   subtitle.style.opacity = '.72';
 
-                  branding.appendChild(logo);
                   branding.appendChild(title);
                   branding.appendChild(subtitle);
                 }
@@ -1738,21 +1800,7 @@ class MainActivity : ComponentActivity() {
                 wrap.style.gap = '8px';
                 wrap.style.width = '100%';
                 wrap.style.maxWidth = '320px';
-                wrap.style.zIndex = '30';
-
-                if (useFloating) {
-                  wrap.style.position = 'fixed';
-                  wrap.style.left = '50%';
-                  wrap.style.bottom = '20px';
-                  wrap.style.transform = 'translateX(-50%)';
-                  wrap.style.margin = '0';
-                } else {
-                  wrap.style.position = 'relative';
-                  wrap.style.left = '';
-                  wrap.style.bottom = '';
-                  wrap.style.transform = '';
-                  wrap.style.margin = '18px auto 0';
-                }
+                wrap.style.margin = '14px auto 0';
 
                 var makeButton = function(text, mode) {
                   var btn = document.createElement('button');
@@ -1880,6 +1928,23 @@ class MainActivity : ComponentActivity() {
 
                 ['pointerdown', 'touchstart', 'mousedown', 'click', 'touchend', 'pointerup'].forEach(function(type) {
                   document.addEventListener(type, handleProxyEvent, true);
+                });
+              };
+
+              var webUiReadySent = false;
+              var reportWebUiReadyIfPossible = function() {
+                if (webUiReadySent) { return; }
+                var authReady = !!document.querySelector(
+                  '#auth-pages .auth-image,.auth-pages .auth-image,.auth-pages input[type=\"tel\"],.auth-pages .qr-canvas'
+                );
+                var chatReady = !!document.querySelector(
+                  '.left-sidebar .chatlist .chatlist-chat,.chat-main .bubbles,.chat-input .input-message-input'
+                );
+                if (!authReady && !chatReady) { return; }
+                webUiReadySent = true;
+                send('${BridgeCommandTypes.WEB_UI_READY}', {
+                  href: String(location.href || ''),
+                  mode: authReady ? 'auth' : 'chat'
                 });
               };
 
@@ -2169,8 +2234,10 @@ class MainActivity : ComponentActivity() {
               syncSystemBars();
               ensureModSettingsEntry();
               ensureDownloadsButton();
+              applySidebarMenuTweaks();
               ensureAuthImportButtons();
               bindProxyLinkIntercept();
+              reportWebUiReadyIfPossible();
 
               setInterval(removeSwitchLinks, 1800);
               setInterval(removeMoreMenuEntry, 1800);
@@ -2179,7 +2246,9 @@ class MainActivity : ComponentActivity() {
               setInterval(syncSystemBars, 2000);
               setInterval(ensureModSettingsEntry, 1200);
               setInterval(ensureDownloadsButton, 1500);
+              setInterval(applySidebarMenuTweaks, 1800);
               setInterval(ensureAuthImportButtons, 1200);
+              setInterval(reportWebUiReadyIfPossible, 900);
             })();
         """.trimIndent()
 
@@ -2272,6 +2341,25 @@ class MainActivity : ComponentActivity() {
                 DebugLogStore.log("PROXY", "Clear proxy override failed: ${it::class.java.simpleName}: ${it.message}")
             }.onSuccess {
                 DebugLogStore.log("PROXY", "Proxy override cleared (DIRECT)")
+            }
+            return
+        }
+
+        if (proxyState.type == ProxyType.MTPROTO) {
+            DebugLogStore.log(
+                "PROXY",
+                "MTProto proxy selected. WebView ProxyController cannot apply MTProto directly; keeping DIRECT transport for WebView.",
+            )
+            runCatching {
+                ProxyController.getInstance().clearProxyOverride(
+                    executor,
+                    { AppRepositories.postProxyState(proxyState) },
+                )
+            }.onFailure {
+                DebugLogStore.log(
+                    "PROXY",
+                    "Unable to clear proxy override for MTProto fallback: ${it::class.java.simpleName}: ${it.message}",
+                )
             }
             return
         }
