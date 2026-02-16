@@ -5,6 +5,8 @@ import androidx.security.crypto.EncryptedFile
 import androidx.security.crypto.MasterKey
 import com.tgweb.core.db.dao.MediaDao
 import com.tgweb.core.db.entity.MediaFileEntity
+import java.io.BufferedInputStream
+import java.io.BufferedOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
@@ -25,8 +27,16 @@ class MediaCacheManager(
             .build()
     }
 
-    suspend fun cache(fileId: String, mimeType: String, bytes: Long, source: InputStream, isPinned: Boolean = false): String {
-        val target = File(cacheDir, "${UUID.randomUUID()}_$fileId.bin")
+    suspend fun cache(
+        fileId: String,
+        mimeType: String,
+        bytes: Long,
+        source: InputStream,
+        isPinned: Boolean = false,
+        fileName: String? = null,
+        onProgress: ((Long) -> Unit)? = null,
+    ): String {
+        val target = File(cacheDir, buildCacheFileName(fileId, mimeType, fileName))
         val encryptedFile = EncryptedFile.Builder(
             target,
             appContext,
@@ -34,8 +44,21 @@ class MediaCacheManager(
             EncryptedFile.FileEncryptionScheme.AES256_GCM_HKDF_4KB,
         ).build()
 
-        encryptedFile.openFileOutput().use { output: FileOutputStream ->
-            source.copyTo(output)
+        encryptedFile.openFileOutput().use { rawOutput: FileOutputStream ->
+            BufferedOutputStream(rawOutput).use { output ->
+                BufferedInputStream(source).use { input ->
+                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                    var copied = 0L
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read <= 0) break
+                        output.write(buffer, 0, read)
+                        copied += read
+                        onProgress?.invoke(copied)
+                    }
+                    output.flush()
+                }
+            }
         }
 
         mediaDao.upsert(
@@ -51,6 +74,30 @@ class MediaCacheManager(
         )
         evictIfNeeded()
         return target.absolutePath
+    }
+
+    private fun buildCacheFileName(fileId: String, mimeType: String, rawFileName: String?): String {
+        val safeBase = rawFileName
+            ?.substringAfterLast('/')
+            ?.substringAfterLast('\\')
+            ?.replace(Regex("[^a-zA-Z0-9._-]"), "_")
+            ?.takeIf { it.isNotBlank() }
+            ?: fileId.replace(Regex("[^a-zA-Z0-9._-]"), "_")
+
+        val hasExtension = safeBase.contains('.')
+        val extension = when {
+            hasExtension -> ""
+            mimeType.contains("jpeg", ignoreCase = true) -> ".jpg"
+            mimeType.contains("png", ignoreCase = true) -> ".png"
+            mimeType.contains("gif", ignoreCase = true) -> ".gif"
+            mimeType.contains("mp4", ignoreCase = true) -> ".mp4"
+            mimeType.contains("webm", ignoreCase = true) -> ".webm"
+            mimeType.contains("mp3", ignoreCase = true) -> ".mp3"
+            mimeType.contains("ogg", ignoreCase = true) -> ".ogg"
+            mimeType.contains("pdf", ignoreCase = true) -> ".pdf"
+            else -> ".bin"
+        }
+        return "${UUID.randomUUID()}_${safeBase}$extension"
     }
 
     suspend fun resolve(fileId: String): String? {

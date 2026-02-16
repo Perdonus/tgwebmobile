@@ -26,6 +26,11 @@
             android:summary="@string/mod_proxy_summary" />
 
         <Preference
+            android:key="mod_customization"
+            android:title="@string/mod_customization_title"
+            android:summary="@string/mod_customization_summary" />
+
+        <Preference
             android:key="mod_session_tools"
             android:title="@string/mod_session_tools_title"
             android:summary="@string/mod_session_tools_summary" />
@@ -41,14 +46,13 @@
             android:key="mod_use_bundled_web"
             android:title="@string/mod_bundled_web_title"
             android:summary="@string/mod_bundled_web_summary"
-            android:defaultValue="true" />
+            android:defaultValue="false" />
     </PreferenceCategory>
 
     <PreferenceCategory android:title="@string/mod_category_about">
         <Preference
             android:key="mod_version"
-            android:title="@string/mod_version_title"
-            android:selectable="false" />
+            android:title="@string/mod_version_title" />
     </PreferenceCategory>
 
 </PreferenceScreen>

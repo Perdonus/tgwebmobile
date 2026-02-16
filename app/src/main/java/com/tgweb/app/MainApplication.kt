@@ -21,6 +21,7 @@ import com.tgweb.core.webbridge.WebBootstrapSnapshot
 import com.tgweb.core.webbridge.WebBridgeBus
 import com.tgweb.core.webbridge.WebDialogSnapshot
 import com.tgweb.core.webbridge.WebMessageSnapshot
+import com.google.firebase.messaging.FirebaseMessaging
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -162,15 +163,30 @@ class MainApplication : Application() {
         }
 
         appScope.launch {
+            val profileBackedProxy = ProxyProfilesStore.resolveActiveConfig(this@MainApplication)
             val persistedProxy = database.syncStateDao().get(KEY_PROXY_STATE)?.value
                 ?.let(::proxyFromJson)
                 ?: ProxyConfigSnapshot()
-            AppRepositories.updateProxyState(persistedProxy)
+            val proxyToApply = if (profileBackedProxy.enabled) {
+                profileBackedProxy
+            } else {
+                persistedProxy
+            }
+            AppRepositories.updateProxyState(proxyToApply)
             AppRepositories.postInterfaceScaleState(
                 getSharedPreferences(KeepAliveService.PREFS, Context.MODE_PRIVATE)
                     .getInt(KeepAliveService.KEY_UI_SCALE_PERCENT, 100)
             )
             AppRepositories.postKeepAliveState(KeepAliveService.isEnabled(this@MainApplication))
+        }
+
+        runCatching {
+            FirebaseMessaging.getInstance().token
+                .addOnSuccessListener { token ->
+                    appScope.launch {
+                        runCatching { AppRepositories.notificationService.registerDeviceToken(token) }
+                    }
+                }
         }
 
         SyncScheduler.schedulePeriodic(this)

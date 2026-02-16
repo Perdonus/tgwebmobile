@@ -26,6 +26,7 @@ class ChatRepositoryImpl(
     init {
         scope.launch {
             tdLibGateway.observeIncomingMessages().collect { event ->
+                val now = System.currentTimeMillis()
                 messageDao.upsertAll(
                     listOf(
                         MessageEntity(
@@ -35,10 +36,23 @@ class ChatRepositoryImpl(
                             text = event.text,
                             status = "received",
                             createdAt = event.createdAt,
-                            updatedAt = System.currentTimeMillis(),
+                            updatedAt = now,
                         )
                     )
                 )
+
+                runCatching {
+                    AppRepositories.notificationService.showMessageNotification(
+                        MessageItem(
+                            messageId = event.messageId,
+                            chatId = event.chatId,
+                            senderUserId = event.senderUserId,
+                            text = event.text,
+                            status = "received",
+                            createdAt = event.createdAt,
+                        ),
+                    )
+                }
             }
         }
     }

@@ -76,6 +76,7 @@ object BridgeCommandTypes {
     const val GET_KEEP_ALIVE_STATE = "GET_KEEP_ALIVE_STATE"
     const val OPEN_DOWNLOADS = "OPEN_DOWNLOADS"
     const val OPEN_SESSION_TOOLS = "OPEN_SESSION_TOOLS"
+    const val OPEN_PROXY_PREVIEW = "OPEN_PROXY_PREVIEW"
 }
 
 object BridgeEventTypes {

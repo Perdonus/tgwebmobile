@@ -1,165 +1,56 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:fillViewport="true">
+    android:orientation="vertical"
+    android:padding="16dp">
+
+    <androidx.appcompat.widget.SwitchCompat
+        android:id="@+id/proxyEnabledSwitch"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/proxy_enabled" />
+
+    <TextView
+        android:id="@+id/proxyListStatusText"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:text="@string/proxy_profiles_hint"
+        android:textSize="13sp" />
+
+    <ListView
+        android:id="@+id/proxyProfilesList"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_marginTop="10dp"
+        android:layout_weight="1"
+        android:dividerHeight="1dp" />
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:padding="16dp">
-
-        <androidx.appcompat.widget.SwitchCompat
-            android:id="@+id/proxyEnabledSwitch"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/proxy_enabled" />
-
-        <TextView
-            android:id="@+id/proxyHealthText"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
-            android:text="@string/proxy_health_checking"
-            android:textStyle="bold" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:text="@string/proxy_type"
-            android:textStyle="bold" />
-
-        <Spinner
-            android:id="@+id/proxyTypeSpinner"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp" />
-
-        <LinearLayout
-            android:id="@+id/proxyServerBlock"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="14dp"
-            android:orientation="horizontal">
-
-            <EditText
-                android:id="@+id/proxyHostInput"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="2"
-                android:hint="@string/proxy_host"
-                android:importantForAutofill="no"
-                android:inputType="textUri"
-                android:maxLines="1" />
-
-            <Space
-                android:layout_width="10dp"
-                android:layout_height="1dp" />
-
-            <EditText
-                android:id="@+id/proxyPortInput"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:hint="@string/proxy_port"
-                android:importantForAutofill="no"
-                android:inputType="number"
-                android:maxLines="1" />
-        </LinearLayout>
-
-        <LinearLayout
-            android:id="@+id/proxyAuthBlock"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
-            android:orientation="vertical">
-
-            <EditText
-                android:id="@+id/proxyUsernameInput"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:hint="@string/proxy_username"
-                android:importantForAutofill="no"
-                android:inputType="text"
-                android:maxLines="1" />
-
-            <EditText
-                android:id="@+id/proxyPasswordInput"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:hint="@string/proxy_password"
-                android:importantForAutofill="no"
-                android:inputType="textPassword"
-                android:maxLines="1" />
-        </LinearLayout>
-
-        <LinearLayout
-            android:id="@+id/proxySecretBlock"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
-            android:orientation="vertical">
-
-            <EditText
-                android:id="@+id/proxySecretInput"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:hint="@string/proxy_secret"
-                android:importantForAutofill="no"
-                android:inputType="text"
-                android:maxLines="1" />
-        </LinearLayout>
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="20dp"
-            android:text="@string/proxy_link_import_title"
-            android:textStyle="bold" />
-
-        <EditText
-            android:id="@+id/proxyLinkInput"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:hint="@string/proxy_link_import_hint"
-            android:importantForAutofill="no"
-            android:inputType="textUri|textMultiLine"
-            android:minLines="2" />
+        android:layout_marginTop="10dp"
+        android:orientation="horizontal">
 
         <Button
-            android:id="@+id/proxyImportButton"
-            android:layout_width="match_parent"
+            android:id="@+id/proxyAddButton"
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
+            android:layout_weight="1"
+            android:text="@string/proxy_add" />
+
+        <Space
+            android:layout_width="10dp"
+            android:layout_height="1dp" />
+
+        <Button
+            android:id="@+id/proxyImportFromLinkButton"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
             android:text="@string/proxy_import_button" />
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="20dp"
-            android:orientation="horizontal">
-
-            <Button
-                android:id="@+id/proxySaveButton"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="@string/proxy_apply_button" />
-
-            <Space
-                android:layout_width="10dp"
-                android:layout_height="1dp" />
-
-            <Button
-                android:id="@+id/proxyDisableButton"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="@string/proxy_disable_button" />
-        </LinearLayout>
     </LinearLayout>
-</ScrollView>
+
+</LinearLayout>
+

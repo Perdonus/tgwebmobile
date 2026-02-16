@@ -6,11 +6,14 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.view.View
 import androidx.core.content.ContextCompat
 import androidx.preference.Preference
+import androidx.preference.PreferenceGroupAdapter
 import androidx.preference.PreferenceFragmentCompat
 import androidx.preference.SeekBarPreference
 import androidx.preference.SwitchPreferenceCompat
+import androidx.recyclerview.widget.RecyclerView
 import com.tgweb.core.data.AppRepositories
 
 class ModSettingsFragment : PreferenceFragmentCompat() {
@@ -29,7 +32,13 @@ class ModSettingsFragment : PreferenceFragmentCompat() {
         bindProxyEntryPreference()
         bindSessionToolsPreference()
         bindDownloadsEntryPreference()
+        bindCustomizationEntryPreference()
         bindVersionPreference()
+    }
+
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+        bindVersionLongPressDebugEntry()
     }
 
     override fun onResume() {
@@ -114,11 +123,50 @@ class ModSettingsFragment : PreferenceFragmentCompat() {
         }
     }
 
+    private fun bindCustomizationEntryPreference() {
+        val pref = findPreference<Preference>(KEY_CUSTOMIZATION) ?: return
+        pref.setOnPreferenceClickListener {
+            startActivity(Intent(requireContext(), CustomizationActivity::class.java))
+            true
+        }
+    }
+
     private fun bindVersionPreference() {
         val versionName = runCatching {
             requireContext().packageManager.getPackageInfo(requireContext().packageName, 0).versionName
         }.getOrDefault("unknown")
         findPreference<Preference>(KEY_VERSION)?.summary = versionName
+    }
+
+    private fun bindVersionLongPressDebugEntry() {
+        val recycler = listView ?: return
+        val versionPreference = findPreference<Preference>(KEY_VERSION) ?: return
+        recycler.post {
+            val adapter = recycler.adapter as? PreferenceGroupAdapter ?: return@post
+            val targetPosition = adapter.getPreferenceAdapterPosition(versionPreference)
+            if (targetPosition == RecyclerView.NO_POSITION) return@post
+
+            val applyLongPress: (View) -> Unit = { row ->
+                row.setOnLongClickListener {
+                    startActivity(Intent(requireContext(), DebugToolsActivity::class.java))
+                    true
+                }
+            }
+
+            recycler.findViewHolderForAdapterPosition(targetPosition)?.itemView?.let(applyLongPress)
+            recycler.addOnChildAttachStateChangeListener(
+                object : RecyclerView.OnChildAttachStateChangeListener {
+                    override fun onChildViewAttachedToWindow(view: View) {
+                        val holder = recycler.getChildViewHolder(view)
+                        if (holder.adapterPosition == targetPosition) {
+                            applyLongPress(view)
+                        }
+                    }
+
+                    override fun onChildViewDetachedFromWindow(view: View) = Unit
+                },
+            )
+        }
     }
 
     private fun updatePushPermissionSummary() {
@@ -145,6 +193,7 @@ class ModSettingsFragment : PreferenceFragmentCompat() {
         private const val KEY_PROXY_SETTINGS = "mod_proxy_settings"
         private const val KEY_SESSION_TOOLS = "mod_session_tools"
         private const val KEY_DOWNLOADS_MANAGER = "mod_downloads_manager"
+        private const val KEY_CUSTOMIZATION = "mod_customization"
         private const val KEY_BUNDLED_WEB = "mod_use_bundled_web"
         private const val KEY_VERSION = "mod_version"
     }

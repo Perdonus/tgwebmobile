@@ -71,6 +71,18 @@
             android:label="@string/session_tools_title"
             android:theme="@style/Theme.TGWeb.Settings" />
 
+        <activity
+            android:name=".CustomizationActivity"
+            android:exported="false"
+            android:label="@string/customization_title"
+            android:theme="@style/Theme.TGWeb.Settings" />
+
+        <activity
+            android:name=".DebugToolsActivity"
+            android:exported="false"
+            android:label="@string/debug_tools_title"
+            android:theme="@style/Theme.TGWeb.Settings" />
+
         <service
             android:name=".KeepAliveService"
             android:enabled="true"

@@ -25,6 +25,13 @@ class KeepAliveService : Service() {
         return START_STICKY
     }
 
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        if (isEnabled(this)) {
+            start(this)
+        }
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     private fun buildNotification(): Notification {
@@ -64,6 +71,9 @@ class KeepAliveService : Service() {
         const val KEY_NAV_BAR_COLOR = "nav_bar_color"
         const val KEY_NOTIFICATION_COLOR = "notification_color"
         const val KEY_PUSH_PERMISSION_PROMPTED = "push_permission_prompted"
+        const val KEY_HIDE_STORIES = "hide_stories"
+        const val KEY_MD3_EFFECTS = "md3_effects"
+        const val KEY_DYNAMIC_COLOR = "dynamic_color"
 
         private const val CHANNEL_ID = "tgweb_keep_alive"
         private const val NOTIFICATION_ID = 10102

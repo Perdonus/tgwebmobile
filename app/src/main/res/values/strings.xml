@@ -20,6 +20,8 @@
     <string name="mod_proxy_summary">HTTP, SOCKS5, MTProto, импорт tg:// и t.me ссылок</string>
     <string name="mod_session_tools_title">Сессия и tdata</string>
     <string name="mod_session_tools_summary">Импорт/экспорт профиля WebView в формате Session или tdata-bridge</string>
+    <string name="mod_customization_title">Кастомизация</string>
+    <string name="mod_customization_summary">Жесты, Stories, MD3-стиль и динамический цвет</string>
     <string name="mod_downloads_title">Загрузки</string>
     <string name="mod_downloads_summary">Локальный кеш и экспорт в Downloads/tgweb_downloads</string>
     <string name="mod_bundled_web_title">Использовать bundled Telegram Web</string>
@@ -49,6 +51,12 @@
     <string name="proxy_health_ok">Прокси работает • %1$d мс</string>
     <string name="proxy_health_timeout">Прокси не отвечает (таймаут 60 сек)</string>
     <string name="proxy_health_disabled">Прокси выключен</string>
+    <string name="proxy_profiles_hint">Нажми на прокси, чтобы сделать активным. Пинг обновляется каждые 10 секунд.</string>
+    <string name="proxy_profiles_empty">Прокси пока не добавлены. Добавь новый или импортируй ссылку.</string>
+    <string name="proxy_profile_name">Название профиля</string>
+    <string name="proxy_add">Добавить прокси</string>
+    <string name="proxy_edit">Изменить</string>
+    <string name="proxy_delete">Удалить</string>
 
     <string name="downloads_title">Загрузки</string>
     <string name="downloads_refresh">Обновить список</string>
@@ -79,4 +87,14 @@
     <string name="session_tools_import_failed">Не удалось выполнить импорт</string>
     <string name="session_tools_unknown_format">неизвестного формата</string>
     <string name="session_tools_error">Ошибка: %1$s</string>
+
+    <string name="customization_title">Кастомизация</string>
+    <string name="customization_hint">Настройки применяются к web-интерфейсу и сохраняются локально.</string>
+    <string name="custom_hide_stories">Скрыть Stories в интерфейсе</string>
+    <string name="custom_md3_effects">MD3-эффекты (скругления и контейнеры)</string>
+    <string name="custom_dynamic_color">Динамический цвет Android</string>
+
+    <string name="debug_tools_title">Debug tools</string>
+    <string name="debug_test_notification">Тест уведомлений</string>
+    <string name="debug_open_notification_settings">Открыть настройки уведомлений</string>
 </resources>

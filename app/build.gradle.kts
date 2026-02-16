@@ -31,8 +31,8 @@ android {
         applicationId = "com.tgweb.app"
         minSdk = 28
         targetSdk = 34
-        versionCode = 4
-        versionName = "1.0.3"
+        versionCode = 5
+        versionName = "1.0.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -85,4 +85,6 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.preference:preference-ktx:1.2.1")
+    implementation("com.google.android.material:material:1.12.0")
+    implementation("com.google.firebase:firebase-messaging-ktx:24.1.0")
 }

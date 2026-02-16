@@ -4,6 +4,8 @@ import android.content.ContentValues
 import android.content.Context
 import android.os.Environment
 import android.provider.MediaStore
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import com.tgweb.core.data.AppRepositories
 import com.tgweb.core.data.MediaRepository
 import java.io.File
@@ -40,6 +42,7 @@ class MediaRepositoryImpl(
         }
 
         AppRepositories.postDownloadProgress(fileId = fileId, percent = 0)
+        showDownloadNotification(fileId, fileName ?: fileId, 0, inProgress = true)
         return runCatching {
             val connection = openConnection(url)
             connection.instanceFollowRedirects = true
@@ -48,6 +51,7 @@ class MediaRepositoryImpl(
             connection.connect()
             val resolvedMime = mimeType.ifBlank { connection.contentType ?: "application/octet-stream" }
             val sizeBytes = connection.contentLengthLong.coerceAtLeast(0L)
+            var lastProgress = -1
             val path = connection.inputStream.use { input ->
                 cacheManager.cache(
                     fileId = fileId,
@@ -55,13 +59,26 @@ class MediaRepositoryImpl(
                     bytes = sizeBytes,
                     source = input,
                     isPinned = false,
+                    fileName = fileName,
+                    onProgress = { copied ->
+                        if (sizeBytes > 0L) {
+                            val progress = ((copied * 100) / sizeBytes).toInt().coerceIn(0, 100)
+                            if (progress != lastProgress && (progress == 100 || progress - lastProgress >= 3)) {
+                                lastProgress = progress
+                                AppRepositories.postDownloadProgress(fileId = fileId, percent = progress)
+                                showDownloadNotification(fileId, fileName ?: fileId, progress, inProgress = progress < 100)
+                            }
+                        }
+                    },
                 )
             }
             connection.disconnect()
             AppRepositories.postDownloadProgress(fileId = fileId, percent = 100, localUri = path)
+            showDownloadNotification(fileId, fileName ?: fileId, 100, inProgress = false)
             path
         }.onFailure {
             AppRepositories.postDownloadProgress(fileId = fileId, percent = 0, error = "download_failed")
+            showDownloadNotification(fileId, fileName ?: fileId, 0, inProgress = false, failed = true)
         }
     }
 
@@ -102,6 +119,7 @@ class MediaRepositoryImpl(
         context.contentResolver.update(uri, values, null, null)
 
         AppRepositories.postDownloadProgress(fileId = fileId, percent = 100, localUri = uri.toString())
+        showDownloadNotification(fileId, source.name, 100, inProgress = false)
         return Result.success(uri.toString())
     }
 
@@ -131,8 +149,47 @@ class MediaRepositoryImpl(
         return URL(url).openConnection(proxy) as HttpURLConnection
     }
 
+    private fun showDownloadNotification(
+        fileId: String,
+        title: String,
+        progress: Int,
+        inProgress: Boolean,
+        failed: Boolean = false,
+    ) {
+        val builder = NotificationCompat.Builder(context, DOWNLOAD_CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.stat_sys_download)
+            .setOnlyAlertOnce(true)
+            .setAutoCancel(!inProgress)
+            .setContentTitle(title.take(80))
+            .setColor(0xFF3390EC.toInt())
+            .setColorized(true)
+
+        when {
+            failed -> {
+                builder
+                    .setSmallIcon(android.R.drawable.stat_notify_error)
+                    .setContentText("Download failed")
+                    .setProgress(0, 0, false)
+            }
+            inProgress -> {
+                builder
+                    .setContentText("Downloading... $progress%")
+                    .setProgress(100, progress.coerceIn(0, 100), false)
+            }
+            else -> {
+                builder
+                    .setSmallIcon(android.R.drawable.stat_sys_download_done)
+                    .setContentText("Download complete")
+                    .setProgress(0, 0, false)
+            }
+        }
+
+        NotificationManagerCompat.from(context).notify(fileId.hashCode(), builder.build())
+    }
+
     companion object {
         private const val CONNECT_TIMEOUT_MS = 30_000
         private const val READ_TIMEOUT_MS = 60_000
+        private const val DOWNLOAD_CHANNEL_ID = "tgweb_downloads"
     }
 }

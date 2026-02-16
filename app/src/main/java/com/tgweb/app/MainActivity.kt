@@ -17,16 +17,18 @@ import android.os.SystemClock
 import android.util.Log
 import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
 import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
 import android.webkit.URLUtil
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
-import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ProgressBar
@@ -48,13 +50,18 @@ import com.tgweb.core.webbridge.BridgeEvent
 import com.tgweb.core.webbridge.ProxyConfigSnapshot
 import com.tgweb.core.webbridge.ProxyType
 import com.tgweb.core.webbridge.WebBootstrapSnapshot
+import com.google.android.material.bottomsheet.BottomSheetDialog
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.ByteArrayInputStream
 import java.io.File
+import java.net.HttpURLConnection
+import java.net.InetSocketAddress
+import java.net.Proxy
+import java.net.Socket
+import java.net.URL
 
 class MainActivity : ComponentActivity() {
     private lateinit var rootLayout: FrameLayout
@@ -67,6 +74,7 @@ class MainActivity : ComponentActivity() {
     private var startedAtElapsedMs: Long = 0L
     private val offlineCacheFile by lazy { File(cacheDir, OFFLINE_CACHE_FILE_NAME) }
     private val offlineArchiveFile by lazy { File(cacheDir, OFFLINE_ARCHIVE_FILE_NAME) }
+    private var attemptedOfflineFallback: Boolean = false
 
     private val runtimePrefs by lazy {
         getSharedPreferences(KeepAliveService.PREFS, Context.MODE_PRIVATE)
@@ -273,6 +281,7 @@ class MainActivity : ComponentActivity() {
         webView.webViewClient = object : WebViewClient() {
             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                 startedAtElapsedMs = SystemClock.elapsedRealtime()
+                attemptedOfflineFallback = false
                 AppRepositories.postNetworkState(isNetworkAvailable())
                 view?.settings?.cacheMode = if (isNetworkAvailable()) {
                     WebSettings.LOAD_DEFAULT
@@ -297,20 +306,23 @@ class MainActivity : ComponentActivity() {
                     return true
                 }
                 if (ProxyLinkParser.parse(uri) != null) {
-                    handleIncomingProxyUri(uri, showFeedback = true)
+                    showProxyBottomSheet(uri.toString())
                     return true
                 }
                 return false
             }
 
-            override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
-                val url = request?.url ?: return super.shouldInterceptRequest(view, request)
-                if (!request.isForMainFrame) return super.shouldInterceptRequest(view, request)
-
-                if (!isNetworkAvailable() && (url.scheme == "http" || url.scheme == "https")) {
-                    return buildOfflineResponseFromCache()
-                }
-                return super.shouldInterceptRequest(view, request)
+            override fun onReceivedError(
+                view: WebView?,
+                request: WebResourceRequest?,
+                error: WebResourceError?,
+            ) {
+                super.onReceivedError(view, request, error)
+                if (request?.isForMainFrame != true) return
+                if (attemptedOfflineFallback) return
+                if (isNetworkAvailable()) return
+                attemptedOfflineFallback = true
+                loadOfflineFallbackPage()
             }
         }
 
@@ -337,6 +349,7 @@ class MainActivity : ComponentActivity() {
                     BridgeCommandTypes.REQUEST_PUSH_PERMISSION -> requestNotificationPermission()
                     BridgeCommandTypes.OPEN_MOD_SETTINGS -> openModSettings()
                     BridgeCommandTypes.OPEN_SESSION_TOOLS -> openSessionTools(command.payload["mode"])
+                    BridgeCommandTypes.OPEN_PROXY_PREVIEW -> showProxyBottomSheet(command.payload["url"])
                     BridgeCommandTypes.SET_PROXY -> handleProxyCommand(command)
                     BridgeCommandTypes.GET_PROXY_STATUS -> AppRepositories.postProxyState()
                     BridgeCommandTypes.SET_SYSTEM_UI_STYLE -> applySystemUiStyle(command.payload)
@@ -374,22 +387,17 @@ class MainActivity : ComponentActivity() {
 
     private fun loadWebBundle() {
         val bundledUrl = resolveBundledWebKUrl()
-        if (!isNetworkAvailable() && bundledUrl != null) {
-            webView.loadUrl(bundledUrl)
-            return
-        }
-        if (bundledUrl != null && runtimePrefs.getBoolean(KeepAliveService.KEY_USE_BUNDLED_WEBK, true)) {
-            webView.loadUrl(bundledUrl)
-            return
-        }
-        if (!isNetworkAvailable()) {
-            if (offlineArchiveFile.exists()) {
-                webView.loadUrl("file://${offlineArchiveFile.absolutePath}")
-                return
+        val useBundled = runtimePrefs.getBoolean(KeepAliveService.KEY_USE_BUNDLED_WEBK, false)
+
+        if (isNetworkAvailable()) {
+            if (bundledUrl != null && useBundled) {
+                webView.loadUrl(bundledUrl)
+            } else {
+                webView.loadUrl(REMOTE_WEBK_URL)
             }
-            webView.loadUrl(REMOTE_WEBK_URL)
             return
         }
+
         webView.loadUrl(REMOTE_WEBK_URL)
     }
 
@@ -406,6 +414,35 @@ class MainActivity : ComponentActivity() {
             if (exists) return assetUrl
         }
         return null
+    }
+
+    private fun loadOfflineFallbackPage() {
+        val bundledUrl = resolveBundledWebKUrl()
+        when {
+            bundledUrl != null -> {
+                webView.loadUrl(bundledUrl)
+            }
+            offlineArchiveFile.exists() -> {
+                webView.loadUrl("file://${offlineArchiveFile.absolutePath}")
+            }
+            offlineCacheFile.exists() -> {
+                val html = runCatching { offlineCacheFile.readText() }.getOrNull()
+                if (!html.isNullOrBlank()) {
+                    webView.loadDataWithBaseURL(
+                        REMOTE_WEBK_URL,
+                        html,
+                        "text/html",
+                        "UTF-8",
+                        REMOTE_WEBK_URL,
+                    )
+                } else {
+                    webView.loadUrl("file:///android_asset/webapp/offline.html")
+                }
+            }
+            else -> {
+                webView.loadUrl("file:///android_asset/webapp/offline.html")
+            }
+        }
     }
 
     private fun maybeRequestPushPermissionOnce() {
@@ -457,8 +494,12 @@ class MainActivity : ComponentActivity() {
 
     private fun handleLaunchIntent(intent: Intent?) {
         val dataUri = intent?.data
-        if (dataUri != null && handleIncomingProxyUri(dataUri, showFeedback = true)) {
-            return
+        if (dataUri != null) {
+            val parsed = ProxyLinkParser.parse(dataUri)
+            if (parsed != null) {
+                openProxyBottomSheet(parsed, dataUri.toString())
+                return
+            }
         }
 
         val chatId = intent?.getLongExtra("chat_id", 0L) ?: 0L
@@ -469,26 +510,150 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun handleIncomingProxyUri(uri: Uri, showFeedback: Boolean): Boolean {
-        val parsed = ProxyLinkParser.parse(uri) ?: return false
-        lifecycleScope.launch {
-            AppRepositories.updateProxyState(parsed)
-            applyProxyToWebView(parsed)
-            if (showFeedback) {
-                val typeTitle = when (parsed.type) {
-                    ProxyType.HTTP -> "HTTP"
-                    ProxyType.SOCKS5 -> "SOCKS5"
-                    ProxyType.MTPROTO -> "MTProto"
-                    ProxyType.DIRECT -> "DIRECT"
+    private fun showProxyBottomSheet(raw: String?) {
+        if (raw.isNullOrBlank()) return
+        val parsed = ProxyLinkParser.parse(raw) ?: return
+        openProxyBottomSheet(parsed, raw)
+    }
+
+    private fun openProxyBottomSheet(parsed: ProxyConfigSnapshot, sourceLabel: String) {
+        val dialog = BottomSheetDialog(this)
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(36, 30, 36, 30)
+            setBackgroundColor(Color.parseColor("#162331"))
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            )
+        }
+
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            )
+        }
+        val title = TextView(this).apply {
+            text = "Proxy link"
+            textSize = 18f
+            setTextColor(Color.parseColor("#EAF3FF"))
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        val closeTop = TextView(this).apply {
+            text = "✕"
+            textSize = 18f
+            setTextColor(Color.parseColor("#B9CCE4"))
+            setOnClickListener { dialog.dismiss() }
+        }
+        val subtitle = TextView(this).apply {
+            text = sourceLabel
+            textSize = 13f
+            setPadding(0, 6, 0, 12)
+            setTextColor(Color.parseColor("#9BB0C9"))
+        }
+        val details = TextView(this).apply {
+            text = buildString {
+                append("Type: ${parsed.type.name}\n")
+                append("Server: ${parsed.host}:${parsed.port}")
+                if (!parsed.username.isNullOrBlank()) {
+                    append("\nUser: ${parsed.username}")
                 }
-                Toast.makeText(
-                    this@MainActivity,
-                    "Proxy applied: $typeTitle ${parsed.host}:${parsed.port}",
-                    Toast.LENGTH_SHORT,
-                ).show()
+                if (!parsed.secret.isNullOrBlank()) {
+                    append("\nSecret: ${parsed.secret}")
+                }
+            }
+            textSize = 14f
+            setTextColor(Color.parseColor("#DCEAFF"))
+        }
+        val ping = TextView(this).apply {
+            text = "Ping: checking..."
+            textSize = 13f
+            setPadding(0, 12, 0, 14)
+            setTextColor(Color.parseColor("#9BB0C9"))
+        }
+
+        val buttonRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+        }
+        val addButton = Button(this).apply {
+            text = "Add proxy"
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            setOnClickListener {
+                lifecycleScope.launch {
+                    val profile = ProxyProfile(
+                        title = ProxyProfilesStore.defaultTitle(parsed),
+                        config = parsed.copy(enabled = true),
+                    )
+                    ProxyProfilesStore.upsert(this@MainActivity, profile)
+                    ProxyProfilesStore.setActiveProfileId(this@MainActivity, profile.id)
+                    ProxyProfilesStore.setProxyEnabled(this@MainActivity, true)
+                    AppRepositories.updateProxyState(parsed)
+                    applyProxyToWebView(parsed)
+                    Toast.makeText(
+                        this@MainActivity,
+                        "Proxy added: ${parsed.host}:${parsed.port}",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                    dialog.dismiss()
+                }
             }
         }
-        return true
+        val closeButton = Button(this).apply {
+            text = "Close"
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            setOnClickListener { dialog.dismiss() }
+        }
+        buttonRow.addView(addButton)
+        buttonRow.addView(closeButton)
+
+        header.addView(title)
+        header.addView(closeTop)
+        container.addView(header)
+        container.addView(subtitle)
+        container.addView(details)
+        container.addView(ping)
+        container.addView(buttonRow)
+        dialog.setContentView(container)
+        dialog.show()
+
+        lifecycleScope.launch {
+            val latency = measureProxyLatency(parsed)
+            ping.text = if (latency != null) "Ping: ${latency.toInt()} ms" else "Ping: timeout"
+        }
+    }
+
+    private suspend fun measureProxyLatency(state: ProxyConfigSnapshot): Double? {
+        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val startedAt = System.nanoTime()
+            runCatching {
+                when (state.type) {
+                    ProxyType.MTPROTO -> {
+                        Socket().use { socket ->
+                            socket.connect(InetSocketAddress(state.host, state.port), 6_000)
+                        }
+                    }
+                    ProxyType.SOCKS5,
+                    ProxyType.HTTP,
+                    -> {
+                        val proxy = Proxy(
+                            if (state.type == ProxyType.HTTP) Proxy.Type.HTTP else Proxy.Type.SOCKS,
+                            InetSocketAddress(state.host, state.port),
+                        )
+                        val connection = URL("https://web.telegram.org/").openConnection(proxy) as HttpURLConnection
+                        connection.requestMethod = "HEAD"
+                        connection.connectTimeout = 6_000
+                        connection.readTimeout = 6_000
+                        connection.connect()
+                        connection.responseCode
+                        connection.disconnect()
+                    }
+                    ProxyType.DIRECT -> return@withContext null
+                }
+                (System.nanoTime() - startedAt) / 1_000_000.0
+            }.getOrNull()
+        }
     }
 
     private fun openModSettings() {
@@ -548,16 +713,6 @@ class MainActivity : ComponentActivity() {
         return runCatching { JSONArray("[$raw]").getString(0) }.getOrNull()
     }
 
-    private fun buildOfflineResponseFromCache(): WebResourceResponse? {
-        if (!offlineCacheFile.exists()) return null
-        val bytes = runCatching { offlineCacheFile.readBytes() }.getOrNull() ?: return null
-        return WebResourceResponse(
-            "text/html",
-            "UTF-8",
-            ByteArrayInputStream(bytes),
-        )
-    }
-
     private fun handleAuthHandoff(uri: Uri) {
         val token = uri.getQueryParameter("token").orEmpty()
         if (token.isBlank()) return
@@ -593,8 +748,11 @@ class MainActivity : ComponentActivity() {
               try {
                 var scale = Math.max(0.75, Math.min(1.4, ${scalePercent} / 100));
                 document.documentElement.style.setProperty('--tgweb-mobile-scale', String(scale));
-                if (document.body) {
-                  document.body.style.zoom = String(scale);
+                var root = document.getElementById('root') || document.body;
+                if (root) {
+                  root.style.transformOrigin = 'top left';
+                  root.style.transform = 'scale(' + scale + ')';
+                  root.style.width = (100 / scale) + '%';
                 }
               } catch (e) {}
             })();
@@ -719,10 +877,24 @@ class MainActivity : ComponentActivity() {
 
     private fun injectMobileEnhancements() {
         val scale = currentScalePercent()
+        val hideStories = runtimePrefs.getBoolean(KeepAliveService.KEY_HIDE_STORIES, false)
+        val md3Effects = runtimePrefs.getBoolean(KeepAliveService.KEY_MD3_EFFECTS, true)
+        val dynamicColor = runtimePrefs.getBoolean(KeepAliveService.KEY_DYNAMIC_COLOR, true)
+        val md3Accent = if (dynamicColor) {
+            colorToHex(UiThemeBridge.readDynamicSurfaceColor(this))
+        } else {
+            runtimePrefs.getString(KeepAliveService.KEY_STATUS_BAR_COLOR, "#3390EC").orEmpty()
+        }
         val script = """
             (function() {
               if (window.__tgwebMobileEnhancerInstalled) { return; }
               window.__tgwebMobileEnhancerInstalled = true;
+
+              var custom = {
+                hideStories: ${if (hideStories) "true" else "false"},
+                md3Effects: ${if (md3Effects) "true" else "false"},
+                md3Accent: '${md3Accent}'
+              };
 
               var send = function(type, payload) {
                 try {
@@ -737,8 +909,11 @@ class MainActivity : ComponentActivity() {
                 var p = clamp(Number(value) || 100, 75, 140);
                 var zoom = p / 100;
                 document.documentElement.style.setProperty('--tgweb-mobile-scale', String(zoom));
-                if (document.body) {
-                  document.body.style.zoom = String(zoom);
+                var root = document.getElementById('root') || document.body;
+                if (root) {
+                  root.style.transformOrigin = 'top left';
+                  root.style.transform = 'scale(' + zoom + ')';
+                  root.style.width = (100 / zoom) + '%';
                 }
                 return p;
               };
@@ -803,6 +978,53 @@ class MainActivity : ComponentActivity() {
                 });
               };
 
+              var applyCustomizations = function() {
+                if (custom.hideStories) {
+                  document.querySelectorAll('[class*=\"story\"], [class*=\"Story\"], [data-tab=\"stories\"]').forEach(function(node) {
+                    hideNode(node.closest('.stories, .story, .row, .tabs-tab') || node);
+                  });
+                }
+                if (!custom.md3Effects) { return; }
+                if (!document.getElementById('tgweb-md3-patch')) {
+                  var style = document.createElement('style');
+                  style.id = 'tgweb-md3-patch';
+                  style.textContent =
+                    ':root{--tgweb-md3-accent:' + custom.md3Accent + ';}' +
+                    '.chatlist,.chat,.sidebar,.popup,.row,.btn-primary,.btn-primary-transparent{' +
+                      'border-radius:16px !important;' +
+                    '}' +
+                    '.row,.popup,.chat-input,.new-message-wrapper,.media-viewer{' +
+                      'backdrop-filter:saturate(1.15);' +
+                    '}' +
+                    '.btn-primary,.btn-primary-transparent{' +
+                      'background:color-mix(in srgb, var(--tgweb-md3-accent) 82%, white 18%) !important;' +
+                    '}';
+                  document.head.appendChild(style);
+                }
+              };
+
+              var activeDownloads = {};
+              var updateDownloadsBadge = function() {
+                var count = 0;
+                Object.keys(activeDownloads).forEach(function(key) {
+                  if (activeDownloads[key]) { count += 1; }
+                });
+                document.querySelectorAll('.tgweb-downloads-badge').forEach(function(node) {
+                  node.textContent = String(count);
+                  node.style.display = count > 0 ? 'flex' : 'none';
+                });
+              };
+
+              var removeMoreMenuEntry = function() {
+                document.querySelectorAll('.menu-item,.btn-menu-item,.row').forEach(function(node) {
+                  var text = String(node.textContent || '').trim().toLowerCase();
+                  if (!text) { return; }
+                  if (text === 'ещё' || text === 'more') {
+                    hideNode(node);
+                  }
+                });
+              };
+
               var ensureModSettingsEntry = function() {
                 var buttonsRoot = document.querySelector('.settings-container .profile-buttons');
                 if (!buttonsRoot) { return; }
@@ -812,28 +1034,27 @@ class MainActivity : ComponentActivity() {
                 row.className = 'row no-subtitle row-with-icon row-with-padding tgweb-mod-settings-row';
 
                 var icon = document.createElement('span');
-                icon.className = 'tgico tgico-settings row-icon';
+                icon.className = 'row-icon';
+                icon.textContent = '❤';
+                icon.style.fontSize = '16px';
 
                 var title = document.createElement('div');
                 title.className = 'row-title';
                 title.textContent = 'Настройки мода';
+                title.style.fontWeight = '600';
 
-                var right = document.createElement('div');
-                right.className = 'row-title row-title-right row-title-right-secondary';
-                right.textContent = 'Android';
-
-                row.append(icon, title, right);
+                row.append(icon, title);
                 row.addEventListener('click', function(e) {
                   e.preventDefault();
                   e.stopPropagation();
                   send('${BridgeCommandTypes.OPEN_MOD_SETTINGS}', {});
                 }, { passive: false });
 
-                buttonsRoot.appendChild(row);
+                buttonsRoot.insertBefore(row, buttonsRoot.firstChild || null);
               };
 
               var ensureDownloadsButton = function() {
-                var header = document.querySelector('.left-header, .Topbar, .topbar');
+                var header = document.querySelector('.left-header');
                 if (!header) { return; }
                 if (header.querySelector('.tgweb-downloads-button')) { return; }
 
@@ -852,16 +1073,37 @@ class MainActivity : ComponentActivity() {
                 button.style.background = 'transparent';
                 button.style.color = 'inherit';
                 button.style.cursor = 'pointer';
+                button.style.position = 'relative';
                 button.addEventListener('click', function(e) {
                   e.preventDefault();
                   e.stopPropagation();
                   send('${BridgeCommandTypes.OPEN_DOWNLOADS}', {});
                 }, { passive: false });
+
+                var badge = document.createElement('span');
+                badge.className = 'tgweb-downloads-badge';
+                badge.style.position = 'absolute';
+                badge.style.top = '-4px';
+                badge.style.right = '-4px';
+                badge.style.width = '17px';
+                badge.style.height = '17px';
+                badge.style.borderRadius = '999px';
+                badge.style.background = '#ff4d4f';
+                badge.style.color = '#fff';
+                badge.style.fontSize = '10px';
+                badge.style.fontWeight = '700';
+                badge.style.display = 'none';
+                badge.style.alignItems = 'center';
+                badge.style.justifyContent = 'center';
+                badge.textContent = '0';
+                button.appendChild(badge);
                 header.appendChild(button);
+                updateDownloadsBadge();
               };
 
               var ensureAuthImportButtons = function() {
-                var authPages = document.getElementById('auth-pages');
+                var authPages = document.getElementById('auth-pages') ||
+                  document.querySelector('.auth-pages, .login-page, [class*=\"loginPage\"], [class*=\"pageSign\"]');
                 var existing = document.querySelector('.tgweb-auth-import-actions');
                 if (!authPages) {
                   if (existing) { existing.remove(); }
@@ -910,10 +1152,38 @@ class MainActivity : ComponentActivity() {
                   return btn;
                 };
 
-                wrap.appendChild(makeButton('Войти через Session', '${SessionToolsActivity.ACTION_IMPORT_SESSION}'));
-                wrap.appendChild(makeButton('Войти через tdata', '${SessionToolsActivity.ACTION_IMPORT_TDATA}'));
+                wrap.appendChild(makeButton('Импорт Session', '${SessionToolsActivity.ACTION_IMPORT_SESSION}'));
+                wrap.appendChild(makeButton('Импорт tdata', '${SessionToolsActivity.ACTION_IMPORT_TDATA}'));
 
                 target.appendChild(wrap);
+              };
+
+              var bindProxyLinkIntercept = function() {
+                if (window.__tgwebProxyLinkBound) { return; }
+                window.__tgwebProxyLinkBound = true;
+                document.addEventListener('click', function(event) {
+                  var link = event.target && event.target.closest ? event.target.closest('a[href]') : null;
+                  if (!link) { return; }
+                  var href = String(link.getAttribute('href') || '').trim();
+                  if (!href) { return; }
+                  var normalized = href.toLowerCase();
+                  var isProxyLink =
+                    normalized.indexOf('tg://proxy?') === 0 ||
+                    normalized.indexOf('tg://socks?') === 0 ||
+                    normalized.indexOf('/proxy?') === 0 ||
+                    normalized.indexOf('/socks?') === 0 ||
+                    normalized.indexOf('https://t.me/proxy?') === 0 ||
+                    normalized.indexOf('http://t.me/proxy?') === 0 ||
+                    normalized.indexOf('https://t.me/socks?') === 0 ||
+                    normalized.indexOf('http://t.me/socks?') === 0;
+                  if (!isProxyLink) { return; }
+                  if (normalized.indexOf('/proxy?') === 0 || normalized.indexOf('/socks?') === 0) {
+                    href = 'https://t.me' + href;
+                  }
+                  event.preventDefault();
+                  event.stopPropagation();
+                  send('${BridgeCommandTypes.OPEN_PROXY_PREVIEW}', { url: href });
+                }, true);
               };
 
               var isInteractiveElement = function(el) {
@@ -934,7 +1204,9 @@ class MainActivity : ComponentActivity() {
                 return document.querySelector(
                   '.topbar .sidebar-close-button:not(.hide), ' +
                   '.chat-info-container .sidebar-close-button:not(.hide), ' +
-                  '.sidebar-header .sidebar-close-button:not(.hide)'
+                  '.sidebar-header .sidebar-close-button:not(.hide), ' +
+                  'button[aria-label*=\"Back\"], button[aria-label*=\"Назад\"], ' +
+                  '.topbar button.btn-icon.tgico-left, .chat-info-container .btn-icon.tgico-left'
                 );
               };
 
@@ -983,13 +1255,15 @@ class MainActivity : ComponentActivity() {
 
               var openMainMenuFromSwipe = function() {
                 var selectors = [
+                  '.left-header button[aria-label*=\"Menu\"]',
+                  '.left-header button[aria-label*=\"Меню\"]',
                   'button[aria-label*=\"More\"]',
                   'button[aria-label*=\"Menu\"]',
                   '.left-header .tgico-more',
-                  '.Topbar .tgico-more',
                   '.left-header .tgico-menu',
-                  '.Topbar .tgico-menu',
-                  '.btn-menu'
+                  '.left-header .btn-menu',
+                  '.left-sidebar .btn-menu',
+                  '.left-header .btn-icon'
                 ];
                 for (var i = 0; i < selectors.length; i++) {
                   var node = document.querySelector(selectors[i]);
@@ -1063,15 +1337,15 @@ class MainActivity : ComponentActivity() {
                   return;
                 }
 
-                var fromRightEdge = touchStartX >= (window.innerWidth - 36);
-                if (fromRightEdge && dx < -56) {
+                var fromRightEdge = touchStartX >= (window.innerWidth - 52);
+                if (dx < -72 && (fromRightEdge || hasOpenDialog())) {
                   if (closeActiveChatIfPossible()) {
                     return;
                   }
                 }
 
-                var fromLeftEdge = touchStartX <= 36;
-                if (dx > 56 && (fromLeftEdge || isMainListScreen())) {
+                var fromLeftEdge = touchStartX <= 44;
+                if (dx > 64 && (fromLeftEdge || isMainListScreen())) {
                   if (hasOpenDialog() && closeActiveChatIfPossible()) {
                     return;
                   }
@@ -1085,17 +1359,33 @@ class MainActivity : ComponentActivity() {
                 if (detail.type === 'INTERFACE_SCALE_STATE') {
                   var payload = detail.payload || {};
                   applyScale(payload.scalePercent);
+                } else if (detail.type === 'DOWNLOAD_PROGRESS') {
+                  var data = detail.payload || {};
+                  var id = String(data.fileId || '');
+                  var percent = Number(data.percent || 0);
+                  if (id) {
+                    activeDownloads[id] = percent < 100 && !data.error;
+                    if (percent >= 100 || data.error) {
+                      delete activeDownloads[id];
+                    }
+                  }
+                  updateDownloadsBadge();
                 }
               });
 
               applyScale(${scale});
               removeSwitchLinks();
+              removeMoreMenuEntry();
+              applyCustomizations();
               syncSystemBars();
               ensureModSettingsEntry();
               ensureDownloadsButton();
               ensureAuthImportButtons();
+              bindProxyLinkIntercept();
 
               setInterval(removeSwitchLinks, 1800);
+              setInterval(removeMoreMenuEntry, 1800);
+              setInterval(applyCustomizations, 2400);
               setInterval(syncSystemBars, 2000);
               setInterval(ensureModSettingsEntry, 1200);
               setInterval(ensureDownloadsButton, 1500);

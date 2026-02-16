@@ -21,7 +21,7 @@ class DownloadsActivity : AppCompatActivity() {
     private var rows: List<Row> = emptyList()
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        val surfaceColor = UiThemeBridge.readSurfaceColor(this)
+        val surfaceColor = UiThemeBridge.resolveSettingsSurfaceColor(this)
         setTheme(
             if (UiThemeBridge.isLight(surfaceColor)) {
                 R.style.Theme_TGWeb_Settings_Light
@@ -65,19 +65,20 @@ class DownloadsActivity : AppCompatActivity() {
             val snapshot = runCatching { AppRepositories.webBootstrapProvider() }.getOrNull()
             rows = snapshot?.cachedMedia
                 ?.map { media ->
+                    val displayName = prettifyName(media.localPath, media.mimeType)
                     Row(
                         fileId = media.fileId,
                         localPath = media.localPath,
                         mimeType = media.mimeType,
                         sizeBytes = media.sizeBytes,
+                        displayName = displayName,
                     )
                 }
                 ?.sortedByDescending { File(it.localPath).lastModified() }
                 .orEmpty()
 
             val labels = rows.map {
-                val name = File(it.localPath).name
-                "$name\n${formatSize(it.sizeBytes)} • ${it.mimeType}"
+                "${it.displayName}\n${formatSize(it.sizeBytes)} • ${it.mimeType}"
             }
             adapter.clear()
             adapter.addAll(labels)
@@ -87,7 +88,7 @@ class DownloadsActivity : AppCompatActivity() {
 
     private fun showActions(row: Row) {
         AlertDialog.Builder(this)
-            .setTitle(File(row.localPath).name)
+            .setTitle(row.displayName)
             .setItems(
                 arrayOf(
                     getString(R.string.downloads_action_export),
@@ -139,6 +140,16 @@ class DownloadsActivity : AppCompatActivity() {
         }
     }
 
+    private fun prettifyName(localPath: String, mimeType: String): String {
+        val raw = File(localPath).name
+        val withoutPrefix = raw.replaceFirst(Regex("^[0-9a-fA-F-]+_"), "")
+        if (withoutPrefix.isBlank()) return raw
+        if (withoutPrefix.endsWith(".bin", ignoreCase = true) && mimeType != "application/octet-stream") {
+            return withoutPrefix.removeSuffix(".bin")
+        }
+        return withoutPrefix
+    }
+
     private fun showToast(message: String) {
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
     }
@@ -148,5 +159,6 @@ class DownloadsActivity : AppCompatActivity() {
         val localPath: String,
         val mimeType: String,
         val sizeBytes: Long,
+        val displayName: String,
     )
 }

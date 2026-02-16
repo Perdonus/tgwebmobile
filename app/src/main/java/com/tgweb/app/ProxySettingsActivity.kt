@@ -2,14 +2,18 @@ package com.tgweb.app
 
 import android.net.Uri
 import android.os.Bundle
+import android.text.InputType
 import android.view.MenuItem
-import android.view.View
+import android.view.ViewGroup
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.EditText
+import android.widget.LinearLayout
+import android.widget.ListView
 import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SwitchCompat
 import androidx.lifecycle.lifecycleScope
@@ -31,25 +35,20 @@ import java.net.URL
 import kotlin.math.roundToInt
 
 class ProxySettingsActivity : AppCompatActivity() {
-    private val proxyTypeValues = listOf(ProxyType.HTTP.name, ProxyType.SOCKS5.name, ProxyType.MTPROTO.name)
-
     private lateinit var proxyEnabledSwitch: SwitchCompat
-    private lateinit var proxyTypeSpinner: Spinner
-    private lateinit var hostInput: EditText
-    private lateinit var portInput: EditText
-    private lateinit var usernameInput: EditText
-    private lateinit var passwordInput: EditText
-    private lateinit var secretInput: EditText
-    private lateinit var linkInput: EditText
-    private lateinit var proxyHealthText: TextView
+    private lateinit var proxyList: ListView
+    private lateinit var addButton: Button
+    private lateinit var importButton: Button
+    private lateinit var statusText: TextView
+    private lateinit var adapter: ArrayAdapter<String>
 
-    private lateinit var serverBlock: View
-    private lateinit var authBlock: View
-    private lateinit var secretBlock: View
-    private var proxyHealthJob: Job? = null
+    private var profiles: MutableList<ProxyProfile> = mutableListOf()
+    private var selectedProfileId: String? = null
+    private var healthLoopJob: Job? = null
+    private val health = linkedMapOf<String, String>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        val surfaceColor = UiThemeBridge.readSurfaceColor(this)
+        val surfaceColor = UiThemeBridge.resolveSettingsSurfaceColor(this)
         setTheme(
             if (UiThemeBridge.isLight(surfaceColor)) {
                 R.style.Theme_TGWeb_Settings_Light
@@ -65,25 +64,30 @@ class ProxySettingsActivity : AppCompatActivity() {
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
         supportActionBar?.title = getString(R.string.proxy_settings_title)
 
-        bindViews()
-        configureTypeSpinner()
-        bindListeners()
+        proxyEnabledSwitch = findViewById(R.id.proxyEnabledSwitch)
+        proxyList = findViewById(R.id.proxyProfilesList)
+        addButton = findViewById(R.id.proxyAddButton)
+        importButton = findViewById(R.id.proxyImportFromLinkButton)
+        statusText = findViewById(R.id.proxyListStatusText)
+        adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, mutableListOf())
+        proxyList.adapter = adapter
 
-        renderState(AppRepositories.getProxyState())
+        bindActions()
+        reloadProfiles()
 
         intent?.data?.let { uri ->
-            applyProxyFromUri(uri)
+            handleIncomingProxyUri(uri)
         }
     }
 
     override fun onStart() {
         super.onStart()
-        startProxyHealthLoop()
+        startHealthLoop()
     }
 
     override fun onStop() {
-        proxyHealthJob?.cancel()
-        proxyHealthJob = null
+        healthLoopJob?.cancel()
+        healthLoopJob = null
         super.onStop()
     }
 
@@ -95,178 +99,240 @@ class ProxySettingsActivity : AppCompatActivity() {
         return super.onOptionsItemSelected(item)
     }
 
-    private fun bindViews() {
-        proxyEnabledSwitch = findViewById(R.id.proxyEnabledSwitch)
-        proxyTypeSpinner = findViewById(R.id.proxyTypeSpinner)
-        hostInput = findViewById(R.id.proxyHostInput)
-        portInput = findViewById(R.id.proxyPortInput)
-        usernameInput = findViewById(R.id.proxyUsernameInput)
-        passwordInput = findViewById(R.id.proxyPasswordInput)
-        secretInput = findViewById(R.id.proxySecretInput)
-        linkInput = findViewById(R.id.proxyLinkInput)
-        proxyHealthText = findViewById(R.id.proxyHealthText)
+    private fun bindActions() {
+        proxyEnabledSwitch.setOnCheckedChangeListener { _, enabled ->
+            ProxyProfilesStore.setProxyEnabled(this, enabled)
+            applyCurrentProxyState()
+            renderList()
+        }
 
-        serverBlock = findViewById(R.id.proxyServerBlock)
-        authBlock = findViewById(R.id.proxyAuthBlock)
-        secretBlock = findViewById(R.id.proxySecretBlock)
-    }
+        addButton.setOnClickListener { showProxyEditorDialog() }
+        importButton.setOnClickListener { showImportLinkDialog() }
 
-    private fun configureTypeSpinner() {
-        val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, proxyTypeValues)
-        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
-        proxyTypeSpinner.adapter = adapter
-    }
+        proxyList.setOnItemClickListener { _, _, position, _ ->
+            val profile = profiles.getOrNull(position) ?: return@setOnItemClickListener
+            selectedProfileId = profile.id
+            ProxyProfilesStore.setActiveProfileId(this, profile.id)
+            applyCurrentProxyState()
+            renderList()
+        }
 
-    private fun bindListeners() {
-        proxyEnabledSwitch.setOnCheckedChangeListener { _, _ -> updateFieldVisibility() }
-        proxyTypeSpinner.setOnItemSelectedListener(
-            object : android.widget.AdapterView.OnItemSelectedListener {
-                override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: View?, position: Int, id: Long) {
-                    updateFieldVisibility()
+        proxyList.setOnItemLongClickListener { _, _, position, _ ->
+            val profile = profiles.getOrNull(position) ?: return@setOnItemLongClickListener true
+            AlertDialog.Builder(this)
+                .setTitle(profile.title)
+                .setItems(arrayOf(getString(R.string.proxy_edit), getString(R.string.proxy_delete))) { _, which ->
+                    when (which) {
+                        0 -> showProxyEditorDialog(profile)
+                        1 -> {
+                            profiles = ProxyProfilesStore.remove(this, profile.id).toMutableList()
+                            if (selectedProfileId == profile.id) {
+                                selectedProfileId = ProxyProfilesStore.getActiveProfileId(this)
+                            }
+                            applyCurrentProxyState()
+                            renderList()
+                        }
+                    }
                 }
-
-                override fun onNothingSelected(parent: android.widget.AdapterView<*>?) = Unit
-            },
-        )
-
-        findViewById<Button>(R.id.proxyImportButton).setOnClickListener {
-            val raw = linkInput.text?.toString().orEmpty()
-            if (raw.isBlank()) {
-                showToast(getString(R.string.proxy_import_empty))
-                return@setOnClickListener
-            }
-            val parsed = ProxyLinkParser.parse(raw)
-            if (parsed == null) {
-                showToast(getString(R.string.proxy_import_invalid))
-                return@setOnClickListener
-            }
-            renderState(parsed)
-            showToast(getString(R.string.proxy_import_applied))
-        }
-
-        findViewById<Button>(R.id.proxySaveButton).setOnClickListener {
-            val state = readStateFromForm(showErrors = true) ?: return@setOnClickListener
-            persistProxyState(state)
-        }
-
-        findViewById<Button>(R.id.proxyDisableButton).setOnClickListener {
-            val disabled = ProxyConfigSnapshot(enabled = false, type = ProxyType.DIRECT)
-            renderState(disabled)
-            persistProxyState(disabled)
+                .show()
+            true
         }
     }
 
-    private fun applyProxyFromUri(uri: Uri) {
+    private fun reloadProfiles() {
+        profiles = ProxyProfilesStore.load(this).toMutableList()
+        selectedProfileId = ProxyProfilesStore.getActiveProfileId(this)
+        proxyEnabledSwitch.isChecked = ProxyProfilesStore.isProxyEnabled(this)
+        renderList()
+        applyCurrentProxyState()
+    }
+
+    private fun renderList() {
+        if (profiles.isEmpty()) {
+            statusText.text = getString(R.string.proxy_profiles_empty)
+        } else {
+            statusText.text = getString(R.string.proxy_profiles_hint)
+        }
+
+        val selectedId = selectedProfileId
+        val enabled = proxyEnabledSwitch.isChecked
+        val rows = profiles.map { profile ->
+            val prefix = when {
+                profile.id == selectedId && enabled -> "●"
+                profile.id == selectedId -> "○"
+                else -> "·"
+            }
+            val healthText = health[profile.id] ?: getString(R.string.proxy_health_checking)
+            "$prefix ${profile.title}\n${profile.config.host}:${profile.config.port} • ${profile.config.type.name} • $healthText"
+        }
+        adapter.clear()
+        adapter.addAll(rows)
+        adapter.notifyDataSetChanged()
+    }
+
+    private fun applyCurrentProxyState() {
+        lifecycleScope.launch {
+            val state = ProxyProfilesStore.resolveActiveConfig(this@ProxySettingsActivity)
+            AppRepositories.updateProxyState(state)
+        }
+    }
+
+    private fun handleIncomingProxyUri(uri: Uri) {
         val parsed = ProxyLinkParser.parse(uri) ?: return
-        renderState(parsed)
-        persistProxyState(parsed)
+        val profile = ProxyProfile(
+            title = ProxyProfilesStore.defaultTitle(parsed),
+            config = parsed.copy(enabled = true),
+        )
+        ProxyProfilesStore.upsert(this, profile)
+        ProxyProfilesStore.setActiveProfileId(this, profile.id)
+        ProxyProfilesStore.setProxyEnabled(this, true)
+        reloadProfiles()
         showToast(getString(R.string.proxy_import_applied))
     }
 
-    private fun persistProxyState(state: ProxyConfigSnapshot) {
-        lifecycleScope.launch {
-            AppRepositories.updateProxyState(state)
-            showToast(getString(R.string.proxy_saved))
-            startProxyHealthLoop()
+    private fun showImportLinkDialog() {
+        val input = EditText(this).apply {
+            hint = getString(R.string.proxy_link_import_hint)
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+            minLines = 2
         }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.proxy_link_import_title)
+            .setView(input)
+            .setPositiveButton(R.string.proxy_import_button) { _, _ ->
+                val parsed = ProxyLinkParser.parse(input.text?.toString())
+                if (parsed == null) {
+                    showToast(getString(R.string.proxy_import_invalid))
+                    return@setPositiveButton
+                }
+                val profile = ProxyProfile(
+                    title = ProxyProfilesStore.defaultTitle(parsed),
+                    config = parsed.copy(enabled = true),
+                )
+                ProxyProfilesStore.upsert(this, profile)
+                ProxyProfilesStore.setActiveProfileId(this, profile.id)
+                ProxyProfilesStore.setProxyEnabled(this, true)
+                reloadProfiles()
+                showToast(getString(R.string.proxy_import_applied))
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
     }
 
-    private fun renderState(state: ProxyConfigSnapshot) {
-        proxyEnabledSwitch.isChecked = state.enabled
-
-        val selectedType = when (state.type) {
-            ProxyType.HTTP -> ProxyType.HTTP.name
-            ProxyType.SOCKS5 -> ProxyType.SOCKS5.name
-            ProxyType.MTPROTO -> ProxyType.MTPROTO.name
-            ProxyType.DIRECT -> ProxyType.HTTP.name
+    private fun showProxyEditorDialog(existing: ProxyProfile? = null) {
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(28, 18, 28, 8)
         }
 
-        val index = proxyTypeValues.indexOf(selectedType)
-        if (index >= 0) {
-            proxyTypeSpinner.setSelection(index)
+        fun makeInput(hint: String, value: String = "", inputType: Int = InputType.TYPE_CLASS_TEXT): EditText {
+            return EditText(this).apply {
+                this.hint = hint
+                this.setText(value)
+                this.inputType = inputType
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                )
+            }
         }
 
-        hostInput.setText(state.host)
-        portInput.setText(if (state.port in 1..65535) state.port.toString() else "")
-        usernameInput.setText(state.username.orEmpty())
-        passwordInput.setText(state.password.orEmpty())
-        secretInput.setText(state.secret.orEmpty())
-
-        updateFieldVisibility()
-    }
-
-    private fun readStateFromForm(showErrors: Boolean): ProxyConfigSnapshot? {
-        if (!proxyEnabledSwitch.isChecked) {
-            return ProxyConfigSnapshot(enabled = false, type = ProxyType.DIRECT)
-        }
-
-        val type = selectedType()
-        val host = hostInput.text?.toString()?.trim().orEmpty()
-        val port = portInput.text?.toString()?.trim()?.toIntOrNull() ?: 0
-
-        if (host.isBlank() || port !in 1..65535) {
-            if (showErrors) showToast(getString(R.string.proxy_invalid_host_port))
-            return null
-        }
-
-        val username = usernameInput.text?.toString()?.trim().orEmpty().ifBlank { null }
-        val password = passwordInput.text?.toString()?.trim().orEmpty().ifBlank { null }
-        val secret = secretInput.text?.toString()?.trim().orEmpty().ifBlank { null }
-
-        if (type == ProxyType.MTPROTO && secret.isNullOrBlank()) {
-            if (showErrors) showToast(getString(R.string.proxy_secret_required))
-            return null
-        }
-
-        return ProxyConfigSnapshot(
-            enabled = true,
-            type = type,
-            host = host,
-            port = port,
-            username = if (type == ProxyType.MTPROTO) null else username,
-            password = if (type == ProxyType.MTPROTO) null else password,
-            secret = if (type == ProxyType.MTPROTO) secret else null,
+        val titleInput = makeInput(getString(R.string.proxy_profile_name), existing?.title.orEmpty())
+        val hostInput = makeInput(getString(R.string.proxy_host), existing?.config?.host.orEmpty())
+        val portInput = makeInput(
+            getString(R.string.proxy_port),
+            existing?.config?.port?.takeIf { it > 0 }?.toString().orEmpty(),
+            InputType.TYPE_CLASS_NUMBER,
         )
-    }
-
-    private fun selectedType(): ProxyType {
-        val raw = proxyTypeSpinner.selectedItem?.toString().orEmpty()
-        return when (raw) {
-            ProxyType.SOCKS5.name -> ProxyType.SOCKS5
-            ProxyType.MTPROTO.name -> ProxyType.MTPROTO
-            else -> ProxyType.HTTP
+        val usernameInput = makeInput(getString(R.string.proxy_username), existing?.config?.username.orEmpty())
+        val passwordInput = makeInput(getString(R.string.proxy_password), existing?.config?.password.orEmpty())
+        val secretInput = makeInput(getString(R.string.proxy_secret), existing?.config?.secret.orEmpty())
+        val typeSpinner = Spinner(this).apply {
+            val values = listOf(ProxyType.HTTP.name, ProxyType.SOCKS5.name, ProxyType.MTPROTO.name)
+            adapter = ArrayAdapter(
+                this@ProxySettingsActivity,
+                android.R.layout.simple_spinner_item,
+                values,
+            ).also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+            val selected = existing?.config?.type?.name ?: ProxyType.HTTP.name
+            setSelection(values.indexOf(selected).coerceAtLeast(0))
         }
+
+        container.addView(titleInput)
+        container.addView(typeSpinner)
+        container.addView(hostInput)
+        container.addView(portInput)
+        container.addView(usernameInput)
+        container.addView(passwordInput)
+        container.addView(secretInput)
+
+        AlertDialog.Builder(this)
+            .setTitle(if (existing == null) R.string.proxy_add else R.string.proxy_edit)
+            .setView(container)
+            .setPositiveButton(R.string.proxy_apply_button) { _, _ ->
+                val host = hostInput.text?.toString()?.trim().orEmpty()
+                val port = portInput.text?.toString()?.trim()?.toIntOrNull() ?: 0
+                val type = runCatching {
+                    ProxyType.valueOf(typeSpinner.selectedItem?.toString().orEmpty())
+                }.getOrDefault(ProxyType.HTTP)
+                val username = usernameInput.text?.toString()?.trim().orEmpty().ifBlank { null }
+                val password = passwordInput.text?.toString()?.trim().orEmpty().ifBlank { null }
+                val secret = secretInput.text?.toString()?.trim().orEmpty().ifBlank { null }
+
+                if (host.isBlank() || port !in 1..65535) {
+                    showToast(getString(R.string.proxy_invalid_host_port))
+                    return@setPositiveButton
+                }
+                if (type == ProxyType.MTPROTO && secret.isNullOrBlank()) {
+                    showToast(getString(R.string.proxy_secret_required))
+                    return@setPositiveButton
+                }
+
+                val config = ProxyConfigSnapshot(
+                    enabled = true,
+                    type = type,
+                    host = host,
+                    port = port,
+                    username = if (type == ProxyType.MTPROTO) null else username,
+                    password = if (type == ProxyType.MTPROTO) null else password,
+                    secret = if (type == ProxyType.MTPROTO) secret else null,
+                )
+                val profile = ProxyProfile(
+                    id = existing?.id ?: java.util.UUID.randomUUID().toString(),
+                    title = titleInput.text?.toString()?.trim().orEmpty().ifBlank {
+                        ProxyProfilesStore.defaultTitle(config)
+                    },
+                    config = config,
+                )
+                ProxyProfilesStore.upsert(this, profile)
+                ProxyProfilesStore.setActiveProfileId(this, profile.id)
+                ProxyProfilesStore.setProxyEnabled(this, proxyEnabledSwitch.isChecked)
+                reloadProfiles()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
     }
 
-    private fun updateFieldVisibility() {
-        val enabled = proxyEnabledSwitch.isChecked
-        val type = selectedType()
-
-        serverBlock.visibility = if (enabled) View.VISIBLE else View.GONE
-        authBlock.visibility = if (enabled && type != ProxyType.MTPROTO) View.VISIBLE else View.GONE
-        secretBlock.visibility = if (enabled && type == ProxyType.MTPROTO) View.VISIBLE else View.GONE
-    }
-
-    private fun startProxyHealthLoop() {
-        proxyHealthJob?.cancel()
-        proxyHealthJob = lifecycleScope.launch {
+    private fun startHealthLoop() {
+        healthLoopJob?.cancel()
+        healthLoopJob = lifecycleScope.launch {
             while (isActive) {
-                val current = readStateFromForm(showErrors = false) ?: AppRepositories.getProxyState()
-                if (!current.enabled || current.type == ProxyType.DIRECT || current.host.isBlank() || current.port !in 1..65535) {
-                    proxyHealthText.text = getString(R.string.proxy_health_disabled)
+                val current = profiles.toList()
+                if (current.isEmpty()) {
                     delay(PROXY_HEALTH_INTERVAL_MS)
                     continue
                 }
 
-                proxyHealthText.text = getString(R.string.proxy_health_checking)
-                val pingMs = withTimeoutOrNull(PROXY_HEALTH_TIMEOUT_MS) {
-                    measureProxyLatency(current)
-                }
-
-                proxyHealthText.text = if (pingMs != null) {
-                    getString(R.string.proxy_health_ok, pingMs.roundToInt())
-                } else {
-                    getString(R.string.proxy_health_timeout)
+                current.forEach { profile ->
+                    val latency = withTimeoutOrNull(PROXY_HEALTH_TIMEOUT_MS) {
+                        measureProxyLatency(profile.config)
+                    }
+                    health[profile.id] = if (latency != null) {
+                        getString(R.string.proxy_health_ok, latency.roundToInt())
+                    } else {
+                        getString(R.string.proxy_health_timeout)
+                    }
+                    renderList()
                 }
                 delay(PROXY_HEALTH_INTERVAL_MS)
             }
@@ -319,10 +385,11 @@ class ProxySettingsActivity : AppCompatActivity() {
     }
 
     companion object {
-        private const val PING_URL = "https://web.telegram.org/"
-        private const val CONNECT_TIMEOUT_MS = 15_000
-        private const val READ_TIMEOUT_MS = 15_000
         private const val PROXY_HEALTH_INTERVAL_MS = 10_000L
         private const val PROXY_HEALTH_TIMEOUT_MS = 60_000L
+        private const val CONNECT_TIMEOUT_MS = 10_000
+        private const val READ_TIMEOUT_MS = 10_000
+        private const val PING_URL = "https://web.telegram.org/"
     }
 }
+
