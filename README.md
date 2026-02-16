@@ -27,7 +27,11 @@ Core goals:
 - This skeleton uses `StubTdLibGateway`; wire real TDLib JNI integration for production.
 - Add `google-services.json` and production Firebase credentials before release.
 - Put a built Telegram Web K fork at `app/src/main/assets/webapp/webk/index.html` to run fully local/offline.
+- You can also place upstream Web K production bundle directly in `app/src/main/assets/webapp/webk-src/public/index.html`
+  (the app auto-detects both paths).
 - If local Web K bundle is absent, the shell falls back to `https://web.telegram.org/k/`.
+- If your environment has broken proxy variables, clone upstream with:
+  `env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy git clone --depth=1 https://github.com/TelegramOrg/Telegram-web-k.git app/src/main/assets/webapp/webk-src`
 
 ## Colab build notebook
 - Template notebook: `colab/tgwebmobile_colab_build_template.ipynb`

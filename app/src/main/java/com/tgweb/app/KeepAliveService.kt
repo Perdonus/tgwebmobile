@@ -6,9 +6,11 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.graphics.Color
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
+import com.tgweb.core.sync.SyncScheduler
 
 class KeepAliveService : Service() {
 
@@ -19,16 +21,20 @@ class KeepAliveService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startForeground(NOTIFICATION_ID, buildNotification())
+        SyncScheduler.schedulePeriodic(this)
         return START_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     private fun buildNotification(): Notification {
+        val tint = contextColor(this)
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_notify_sync)
             .setContentTitle("TGWeb keep alive")
             .setContentText("Background sync and push relay are active")
+            .setColor(tint)
+            .setColorized(true)
             .setOngoing(true)
             .setSilent(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
@@ -54,6 +60,10 @@ class KeepAliveService : Service() {
         const val KEY_KEEP_ALIVE_ENABLED = "keep_alive_enabled"
         const val KEY_UI_SCALE_PERCENT = "ui_scale_percent"
         const val KEY_USE_BUNDLED_WEBK = "use_bundled_webk"
+        const val KEY_STATUS_BAR_COLOR = "status_bar_color"
+        const val KEY_NAV_BAR_COLOR = "nav_bar_color"
+        const val KEY_NOTIFICATION_COLOR = "notification_color"
+        const val KEY_PUSH_PERMISSION_PROMPTED = "push_permission_prompted"
 
         private const val CHANNEL_ID = "tgweb_keep_alive"
         private const val NOTIFICATION_ID = 10102
@@ -81,6 +91,13 @@ class KeepAliveService : Service() {
 
         fun stop(context: Context) {
             context.stopService(Intent(context, KeepAliveService::class.java))
+        }
+
+        fun contextColor(context: Context): Int {
+            val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString(KEY_NOTIFICATION_COLOR, "#3390EC")
+                .orEmpty()
+            return runCatching { Color.parseColor(raw) }.getOrDefault(Color.parseColor("#3390EC"))
         }
     }
 }

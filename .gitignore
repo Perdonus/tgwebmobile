@@ -21,3 +21,6 @@ google-services.json
 
 # Colab local runtime notebook (use template instead)
 colab/tgwebmobile_colab_build.ipynb
+
+# Local upstream Telegram Web K clone (optional, huge, not tracked)
+app/src/main/assets/webapp/webk-src/

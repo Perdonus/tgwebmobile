@@ -5,6 +5,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.graphics.Color
 import android.os.Build
 import android.provider.Settings
 import androidx.core.app.NotificationCompat
@@ -95,6 +96,8 @@ class AndroidNotificationService(
             .setContentText(event.text)
             .setAutoCancel(true)
             .setContentIntent(pendingIntent)
+            .setColor(getNotificationColor())
+            .setColorized(true)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .build()
 
@@ -140,6 +143,13 @@ class AndroidNotificationService(
         return URL(url).openConnection(proxy) as HttpURLConnection
     }
 
+    private fun getNotificationColor(): Int {
+        val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString(KEY_NOTIFICATION_COLOR, "#3390EC")
+            .orEmpty()
+        return runCatching { Color.parseColor(raw) }.getOrDefault(Color.parseColor("#3390EC"))
+    }
+
     fun ensureChannels() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
 
@@ -155,6 +165,7 @@ class AndroidNotificationService(
     companion object {
         private const val PREFS = "tgweb_runtime"
         private const val KEY_BACKEND_BASE_URL = "push_backend_url"
+        private const val KEY_NOTIFICATION_COLOR = "notification_color"
         const val CHANNEL_MESSAGES = "tgweb_messages"
         const val CHANNEL_SILENT = "tgweb_silent"
         const val CHANNEL_DOWNLOADS = "tgweb_downloads"

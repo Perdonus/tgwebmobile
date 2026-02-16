@@ -111,6 +111,7 @@ class MainActivity : ComponentActivity() {
         initViews()
         configureWebView()
         attachBridgeSink()
+        applyPersistedSystemUi()
         loadWebBundle()
         handleLaunchIntent(intent)
         bindBackPressedBehavior()
@@ -118,6 +119,7 @@ class MainActivity : ComponentActivity() {
         AppRepositories.postPushPermissionState(isPushPermissionGranted())
         AppRepositories.postKeepAliveState(KeepAliveService.isEnabled(this))
         AppRepositories.postInterfaceScaleState(currentScalePercent())
+        maybeRequestPushPermissionOnce()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -328,8 +330,9 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun loadWebBundle() {
-        if (hasBundledWebK() && runtimePrefs.getBoolean(KeepAliveService.KEY_USE_BUNDLED_WEBK, true)) {
-            webView.loadUrl(BUNDLED_WEBK_URL)
+        val bundledUrl = resolveBundledWebKUrl()
+        if (bundledUrl != null && runtimePrefs.getBoolean(KeepAliveService.KEY_USE_BUNDLED_WEBK, true)) {
+            webView.loadUrl(bundledUrl)
             return
         }
         if (!isNetworkAvailable()) {
@@ -339,11 +342,43 @@ class MainActivity : ComponentActivity() {
         webView.loadUrl(REMOTE_WEBK_URL)
     }
 
-    private fun hasBundledWebK(): Boolean {
-        return runCatching {
-            assets.open("webapp/webk/index.html").use { }
-            true
-        }.getOrDefault(false)
+    private fun resolveBundledWebKUrl(): String? {
+        val candidates = listOf(
+            "webapp/webk/index.html" to BUNDLED_WEBK_URL,
+            "webapp/webk-src/public/index.html" to BUNDLED_WEBK_SRC_PUBLIC_URL,
+        )
+        for ((assetPath, assetUrl) in candidates) {
+            val exists = runCatching {
+                assets.open(assetPath).use { }
+                true
+            }.getOrDefault(false)
+            if (exists) return assetUrl
+        }
+        return null
+    }
+
+    private fun maybeRequestPushPermissionOnce() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        if (isPushPermissionGranted()) return
+
+        val prompted = runtimePrefs.getBoolean(KeepAliveService.KEY_PUSH_PERMISSION_PROMPTED, false)
+        if (prompted) return
+
+        runtimePrefs.edit().putBoolean(KeepAliveService.KEY_PUSH_PERMISSION_PROMPTED, true).apply()
+        requestNotificationPermission()
+    }
+
+    private fun applyPersistedSystemUi() {
+        val statusRaw = runtimePrefs.getString(KeepAliveService.KEY_STATUS_BAR_COLOR, "#0E1621").orEmpty()
+        val navRaw = runtimePrefs.getString(KeepAliveService.KEY_NAV_BAR_COLOR, statusRaw).orEmpty()
+        val statusColor = runCatching { Color.parseColor(statusRaw) }.getOrDefault(Color.parseColor("#0E1621"))
+        val navColor = runCatching { Color.parseColor(navRaw) }.getOrDefault(statusColor)
+        window.statusBarColor = statusColor
+        window.navigationBarColor = navColor
+    }
+
+    private fun colorToHex(color: Int): String {
+        return String.format("#%06X", 0xFFFFFF and color)
     }
 
     private fun showLoadingOverlay() {
@@ -438,6 +473,12 @@ class MainActivity : ComponentActivity() {
         val navColor = parseHexColor(payload["navBarColor"]) ?: statusColor
         val lightStatusIcons = payload["lightStatusIcons"].toBooleanSafe(defaultValue = false)
         val lightNavIcons = payload["lightNavIcons"].toBooleanSafe(defaultValue = false)
+
+        runtimePrefs.edit()
+            .putString(KeepAliveService.KEY_STATUS_BAR_COLOR, colorToHex(statusColor))
+            .putString(KeepAliveService.KEY_NAV_BAR_COLOR, colorToHex(navColor))
+            .putString(KeepAliveService.KEY_NOTIFICATION_COLOR, colorToHex(statusColor))
+            .apply()
 
         window.statusBarColor = statusColor
         window.navigationBarColor = navColor
@@ -883,6 +924,7 @@ class MainActivity : ComponentActivity() {
         private const val TAG = "MainActivity"
         private const val JS_BRIDGE_NAME = "AndroidBridge"
         private const val BUNDLED_WEBK_URL = "file:///android_asset/webapp/webk/index.html"
+        private const val BUNDLED_WEBK_SRC_PUBLIC_URL = "file:///android_asset/webapp/webk-src/public/index.html"
         private const val REMOTE_WEBK_URL = "https://web.telegram.org/k/"
         private const val OFFLINE_URL = "file:///android_asset/webapp/offline.html"
     }
