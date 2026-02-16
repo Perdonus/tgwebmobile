@@ -8,6 +8,7 @@ import android.view.MenuItem
 import android.widget.Button
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import com.google.firebase.messaging.FirebaseMessaging
 import com.tgweb.core.data.AppRepositories
 import com.tgweb.core.data.MessageItem
 import kotlin.random.Random
@@ -35,6 +36,15 @@ class DebugToolsActivity : AppCompatActivity() {
         val settingsButton = findViewById<Button>(R.id.debugOpenNotificationSettingsButton)
 
         statusText.text = buildStatus()
+        runCatching {
+            FirebaseMessaging.getInstance().token
+                .addOnSuccessListener { token ->
+                    statusText.text = buildStatus() + "\nFCM token: " + token.take(24) + "..."
+                }
+                .addOnFailureListener {
+                    statusText.text = buildStatus() + "\nFCM token: unavailable"
+                }
+        }
         testButton.setOnClickListener {
             val randomId = Random.nextLong(100_000, 999_999)
             AppRepositories.notificationService.showMessageNotification(
@@ -85,4 +95,3 @@ class DebugToolsActivity : AppCompatActivity() {
         return variants.random()
     }
 }
-
