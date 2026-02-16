@@ -265,19 +265,29 @@ class MainApplication : Application() {
 
     companion object {
         private const val KEY_PROXY_STATE = "proxy_state"
+        private const val KEY_RUNTIME_DEFAULTS_MIGRATION_V2 = "runtime_defaults_migration_v2"
     }
 
     private fun ensureRuntimeDefaults() {
         val prefs = getSharedPreferences(KeepAliveService.PREFS, Context.MODE_PRIVATE)
         val editor = prefs.edit()
         var changed = false
-        if (!prefs.contains(KeepAliveService.KEY_MD3_EFFECTS)) {
+
+        // One-time migration for existing installs where these flags were persisted as false.
+        if (!prefs.getBoolean(KEY_RUNTIME_DEFAULTS_MIGRATION_V2, false)) {
             editor.putBoolean(KeepAliveService.KEY_MD3_EFFECTS, true)
-            changed = true
-        }
-        if (!prefs.contains(KeepAliveService.KEY_DYNAMIC_COLOR)) {
             editor.putBoolean(KeepAliveService.KEY_DYNAMIC_COLOR, true)
+            editor.putBoolean(KEY_RUNTIME_DEFAULTS_MIGRATION_V2, true)
             changed = true
+        } else {
+            if (!prefs.contains(KeepAliveService.KEY_MD3_EFFECTS)) {
+                editor.putBoolean(KeepAliveService.KEY_MD3_EFFECTS, true)
+                changed = true
+            }
+            if (!prefs.contains(KeepAliveService.KEY_DYNAMIC_COLOR)) {
+                editor.putBoolean(KeepAliveService.KEY_DYNAMIC_COLOR, true)
+                changed = true
+            }
         }
         if (!prefs.contains(KeepAliveService.KEY_MD3_CONTAINER_STYLE)) {
             editor.putString(KeepAliveService.KEY_MD3_CONTAINER_STYLE, "segmented")
