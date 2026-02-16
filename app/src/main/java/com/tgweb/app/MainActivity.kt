@@ -588,6 +588,25 @@ class MainActivity : ComponentActivity() {
                 } catch (e) {}
               };
 
+              var lastTapTs = 0;
+              var lastTapX = 0;
+              var lastTapY = 0;
+              var lastTapBubble = null;
+
+              var isInteractiveElement = function(el) {
+                if (!el || !el.closest) { return false; }
+                return !!el.closest('a,button,input,textarea,select,label,[role="button"],[contenteditable="true"]');
+              };
+
+              var findBubbleForReaction = function(node) {
+                var el = node;
+                if (el && el.nodeType !== 1) {
+                  el = el.parentElement;
+                }
+                if (!el || !el.closest) { return null; }
+                return el.closest('.bubble,[data-mid]');
+              };
+
               var clamp = function(v, min, max) { return Math.max(min, Math.min(max, v)); };
               var applyScale = function(value) {
                 var p = clamp(Number(value) || 100, 75, 140);
@@ -764,6 +783,40 @@ class MainActivity : ComponentActivity() {
 
               document.addEventListener('touchend', function(e) {
                 if (!e.changedTouches || e.changedTouches.length !== 1) { return; }
+                var touch = e.changedTouches[0];
+                var now = Date.now();
+                var tapDx = touch.clientX - startX;
+                var tapDy = touch.clientY - startY;
+                var tapDistance = Math.sqrt((tapDx * tapDx) + (tapDy * tapDy));
+                var tapDt = now - startTs;
+                var bubble = findBubbleForReaction(e.target);
+
+                if (tapDt < 350 && tapDistance < 16 && bubble && !isInteractiveElement(e.target)) {
+                  var sameBubble =
+                    !!lastTapBubble &&
+                    (lastTapBubble === bubble || lastTapBubble.contains(bubble) || bubble.contains(lastTapBubble));
+                  var isFast = (now - lastTapTs) <= 320;
+                  var isNear = Math.abs(touch.clientX - lastTapX) <= 28 && Math.abs(touch.clientY - lastTapY) <= 28;
+                  if (sameBubble && isFast && isNear) {
+                    ['mousedown', 'mouseup', 'click', 'dblclick'].forEach(function(type) {
+                      bubble.dispatchEvent(new MouseEvent(type, {
+                        bubbles: true,
+                        cancelable: true,
+                        view: window
+                      }));
+                    });
+                    lastTapTs = 0;
+                    lastTapBubble = null;
+                    return;
+                  }
+                  lastTapTs = now;
+                  lastTapX = touch.clientX;
+                  lastTapY = touch.clientY;
+                  lastTapBubble = bubble;
+                } else if ((now - lastTapTs) > 600) {
+                  lastTapBubble = null;
+                }
+
                 var dx = e.changedTouches[0].clientX - startX;
                 var dy = e.changedTouches[0].clientY - startY;
                 var dt = Date.now() - startTs;
