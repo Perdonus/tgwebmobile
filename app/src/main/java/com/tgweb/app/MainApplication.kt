@@ -80,7 +80,7 @@ class MainApplication : Application() {
                         val mime = command.payload["mime"].orEmpty()
                         val name = command.payload["name"]
 
-                        mediaRepository.cacheRemoteFile(
+                        val cacheResult = mediaRepository.cacheRemoteFile(
                             fileId = fileId,
                             url = url,
                             mimeType = mime,
@@ -91,10 +91,15 @@ class MainApplication : Application() {
                         if (export) {
                             mediaRepository.downloadToPublicStorage(
                                 fileId,
-                                command.payload["targetCollection"] ?: "tgweb_downloads",
+                                command.payload["targetCollection"] ?: "flygram_downloads",
                             )
+                        } else if (cacheResult.isFailure) {
+                            cacheResult.exceptionOrNull()?.let { throw it }
                         } else {
-                            mediaRepository.getMediaFile(fileId)
+                            val cachedPath = cacheResult.getOrNull().orEmpty()
+                            if (cachedPath.isNotBlank() && cachedPath != "__segment_pending__") {
+                                AppRepositories.postDownloadProgress(fileId = fileId, percent = 100, localUri = cachedPath)
+                            }
                         }
                     }
                     BridgeCommandTypes.SET_PROXY -> {

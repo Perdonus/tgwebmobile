@@ -6,6 +6,7 @@ import android.graphics.drawable.ColorDrawable
 import android.os.Build
 import android.view.View
 import android.view.ViewGroup
+import android.widget.Button
 import android.widget.EditText
 import android.widget.TextView
 import androidx.core.content.ContextCompat
@@ -25,10 +26,12 @@ object UiThemeBridge {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
             return readSurfaceColor(activity)
         }
-        val color = runCatching {
-            ContextCompat.getColor(activity, android.R.color.system_accent1_600)
-        }.getOrNull()
-        return color ?: readSurfaceColor(activity)
+        val base = readSurfaceColor(activity)
+        val accent = runCatching {
+            ContextCompat.getColor(activity, android.R.color.system_accent1_500)
+        }.getOrNull() ?: return base
+        val blendAmount = if (isLight(base)) 0.16f else 0.22f
+        return ColorUtils.blendARGB(base, accent, blendAmount)
     }
 
     fun resolveSettingsSurfaceColor(activity: Activity): Int {
@@ -49,12 +52,12 @@ object UiThemeBridge {
 
     fun applyContentContrast(root: View, surfaceColor: Int) {
         val darkText = isLight(surfaceColor)
-        val textColor = if (darkText) Color.parseColor("#101820") else Color.parseColor("#EAF2FF")
-        val hintColor = if (darkText) Color.parseColor("#66758A") else Color.parseColor("#9BB0C9")
+        val textColor = if (darkText) Color.parseColor("#142132") else Color.parseColor("#EAF3FF")
+        val hintColor = if (darkText) Color.parseColor("#5E7289") else Color.parseColor("#A2B5CD")
         val bgColor = if (darkText) {
-            ColorUtils.blendARGB(surfaceColor, Color.WHITE, 0.90f)
+            ColorUtils.blendARGB(surfaceColor, Color.WHITE, 0.10f)
         } else {
-            ColorUtils.blendARGB(surfaceColor, Color.BLACK, 0.35f)
+            ColorUtils.blendARGB(surfaceColor, Color.BLACK, 0.18f)
         }
         root.setBackgroundColor(bgColor)
 
@@ -63,6 +66,9 @@ object UiThemeBridge {
                 is EditText -> {
                     view.setTextColor(textColor)
                     view.setHintTextColor(hintColor)
+                }
+                is Button -> {
+                    // Keep button text colors from the active theme for better contrast.
                 }
                 is TextView -> {
                     view.setTextColor(textColor)

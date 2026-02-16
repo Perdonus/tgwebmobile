@@ -14,6 +14,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
+import android.util.Base64
 import android.util.Log
 import android.view.Gravity
 import android.view.View
@@ -74,6 +75,7 @@ class MainActivity : ComponentActivity() {
     private var startedAtElapsedMs: Long = 0L
     private val offlineCacheFile by lazy { File(cacheDir, OFFLINE_CACHE_FILE_NAME) }
     private val offlineArchiveFile by lazy { File(cacheDir, OFFLINE_ARCHIVE_FILE_NAME) }
+    private val authLogoDataUri by lazy { buildAuthLogoDataUri() }
     private var attemptedOfflineFallback: Boolean = false
 
     private val runtimePrefs by lazy {
@@ -202,7 +204,7 @@ class MainActivity : ComponentActivity() {
             isIndeterminate = true
         }
         val title = TextView(this).apply {
-            text = "Telegram Web"
+            text = "FlyGram"
             textSize = 20f
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
@@ -328,16 +330,17 @@ class MainActivity : ComponentActivity() {
 
         webView.setDownloadListener { url, _, contentDisposition, mimeType, _ ->
             val fileName = URLUtil.guessFileName(url, contentDisposition, mimeType)
+            val stableFileId = buildStableDownloadFileId(url, fileName)
             AppRepositories.webBridge.onFromWeb(
                 BridgeCommand(
                     type = BridgeCommandTypes.DOWNLOAD_MEDIA,
                     payload = mapOf(
-                        "fileId" to url.hashCode().toString(),
+                        "fileId" to stableFileId,
                         "url" to url,
                         "mime" to (mimeType ?: "application/octet-stream"),
                         "name" to fileName,
                         "export" to "false",
-                        "targetCollection" to "tgweb_downloads",
+                        "targetCollection" to "flygram_downloads",
                     ),
                 ),
             )
@@ -350,6 +353,7 @@ class MainActivity : ComponentActivity() {
                     BridgeCommandTypes.OPEN_MOD_SETTINGS -> openModSettings()
                     BridgeCommandTypes.OPEN_SESSION_TOOLS -> openSessionTools(command.payload["mode"])
                     BridgeCommandTypes.OPEN_PROXY_PREVIEW -> showProxyBottomSheet(command.payload["url"])
+                    BridgeCommandTypes.OPEN_AUTHOR_CHANNEL -> openAuthorChannel()
                     BridgeCommandTypes.SET_PROXY -> handleProxyCommand(command)
                     BridgeCommandTypes.GET_PROXY_STATUS -> AppRepositories.postProxyState()
                     BridgeCommandTypes.SET_SYSTEM_UI_STYLE -> applySystemUiStyle(command.payload)
@@ -660,6 +664,23 @@ class MainActivity : ComponentActivity() {
         startActivity(Intent(this, ModSettingsActivity::class.java))
     }
 
+    private fun openAuthorChannel() {
+        val script = """
+            (function() {
+              try {
+                if (location.origin.indexOf('web.telegram.org') === -1) {
+                  location.href = '${REMOTE_WEBK_URL}#@plugin_ai';
+                } else {
+                  location.hash = '#@plugin_ai';
+                }
+              } catch (e) {
+                location.href = '${REMOTE_WEBK_URL}#@plugin_ai';
+              }
+            })();
+        """.trimIndent()
+        webView.evaluateJavascript(script, null)
+    }
+
     private fun openSessionTools(mode: String? = null) {
         val intent = Intent(this, SessionToolsActivity::class.java).apply {
             when (mode?.lowercase()) {
@@ -711,6 +732,46 @@ class MainActivity : ComponentActivity() {
     private fun decodeEvaluateJavascriptResult(raw: String?): String? {
         if (raw.isNullOrBlank() || raw == "null") return null
         return runCatching { JSONArray("[$raw]").getString(0) }.getOrNull()
+    }
+
+    private fun buildStableDownloadFileId(url: String, fileName: String): String {
+        val uri = runCatching { Uri.parse(url) }.getOrNull()
+        if (uri == null) {
+            return "${url.hashCode()}_${fileName.hashCode()}"
+        }
+        if (uri.scheme.equals("blob", ignoreCase = true)) {
+            return "blob_${fileName.hashCode()}"
+        }
+        val ignoredParams = setOf("offset", "range", "start", "end", "part", "chunk", "segment")
+        val normalized = buildString {
+            append(uri.scheme.orEmpty())
+            append("://")
+            append(uri.host.orEmpty())
+            append(uri.path.orEmpty())
+            if (uri.queryParameterNames.isNotEmpty()) {
+                val query = uri.queryParameterNames
+                    .sorted()
+                    .filterNot { ignoredParams.contains(it.lowercase()) }
+                    .joinToString("&") { key ->
+                        val values = uri.getQueryParameters(key)
+                        if (values.isNullOrEmpty()) key else "$key=${values.joinToString(",")}"
+                    }
+                if (query.isNotBlank()) {
+                    append('?')
+                    append(query)
+                }
+            }
+        }
+        return "${normalized.hashCode()}_${fileName.hashCode()}"
+    }
+
+    private fun buildAuthLogoDataUri(): String {
+        val bytes = runCatching {
+            assets.open("webapp/flygram_login_logo.png").use { it.readBytes() }
+        }.getOrNull() ?: return ""
+        if (bytes.isEmpty()) return ""
+        val encoded = Base64.encodeToString(bytes, Base64.NO_WRAP)
+        return "data:image/png;base64,$encoded"
     }
 
     private fun handleAuthHandoff(uri: Uri) {
@@ -880,6 +941,10 @@ class MainActivity : ComponentActivity() {
         val hideStories = runtimePrefs.getBoolean(KeepAliveService.KEY_HIDE_STORIES, false)
         val md3Effects = runtimePrefs.getBoolean(KeepAliveService.KEY_MD3_EFFECTS, true)
         val dynamicColor = runtimePrefs.getBoolean(KeepAliveService.KEY_DYNAMIC_COLOR, true)
+        val md3ContainerStyle = runtimePrefs
+            .getString(KeepAliveService.KEY_MD3_CONTAINER_STYLE, "segmented")
+            .orEmpty()
+        val authLogoQuoted = JSONObject.quote(authLogoDataUri)
         val md3Accent = if (dynamicColor) {
             colorToHex(UiThemeBridge.readDynamicSurfaceColor(this))
         } else {
@@ -893,8 +958,10 @@ class MainActivity : ComponentActivity() {
               var custom = {
                 hideStories: ${if (hideStories) "true" else "false"},
                 md3Effects: ${if (md3Effects) "true" else "false"},
-                md3Accent: '${md3Accent}'
+                md3Accent: '${md3Accent}',
+                containerStyle: '${md3ContainerStyle}'
               };
+              var flygramAuthLogo = $authLogoQuoted;
 
               var send = function(type, payload) {
                 try {
@@ -909,11 +976,9 @@ class MainActivity : ComponentActivity() {
                 var p = clamp(Number(value) || 100, 75, 140);
                 var zoom = p / 100;
                 document.documentElement.style.setProperty('--tgweb-mobile-scale', String(zoom));
-                var root = document.getElementById('root') || document.body;
-                if (root) {
-                  root.style.transformOrigin = 'top left';
-                  root.style.transform = 'scale(' + zoom + ')';
-                  root.style.width = (100 / zoom) + '%';
+                document.documentElement.style.zoom = String(zoom);
+                if (document.body) {
+                  document.body.style.zoom = String(zoom);
                 }
                 return p;
               };
@@ -933,6 +998,23 @@ class MainActivity : ComponentActivity() {
                 var g = parseInt(c.slice(2, 4), 16);
                 var b = parseInt(c.slice(4, 6), 16);
                 return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+              };
+
+              var blendHex = function(fromHex, toHex, amount) {
+                var from = String(fromHex || '#0e1621').replace('#', '');
+                var to = String(toHex || '#ffffff').replace('#', '');
+                if (from.length !== 6 || to.length !== 6) { return fromHex || '#0e1621'; }
+                var mix = clamp(Number(amount) || 0, 0, 1);
+                var fromR = parseInt(from.slice(0, 2), 16);
+                var fromG = parseInt(from.slice(2, 4), 16);
+                var fromB = parseInt(from.slice(4, 6), 16);
+                var toR = parseInt(to.slice(0, 2), 16);
+                var toG = parseInt(to.slice(2, 4), 16);
+                var toB = parseInt(to.slice(4, 6), 16);
+                var r = Math.round(fromR + (toR - fromR) * mix).toString(16).padStart(2, '0');
+                var g = Math.round(fromG + (toG - fromG) * mix).toString(16).padStart(2, '0');
+                var b = Math.round(fromB + (toB - fromB) * mix).toString(16).padStart(2, '0');
+                return '#' + r + g + b;
               };
 
               var syncSystemBars = function() {
@@ -978,6 +1060,30 @@ class MainActivity : ComponentActivity() {
                 });
               };
 
+              var replaceVisibleBranding = function() {
+                if (document.title && document.title.toLowerCase().indexOf('telegram') >= 0) {
+                  document.title = document.title.replace(/telegram/gi, 'FlyGram');
+                }
+                var containers = [
+                  document.getElementById('auth-pages'),
+                  document.querySelector('.auth-pages'),
+                  document.querySelector('.login-page'),
+                  document.querySelector('.left-header'),
+                ].filter(Boolean);
+                containers.forEach(function(root) {
+                  root.querySelectorAll('h1,h2,h3,.title,.subtitle,button,span,div').forEach(function(node) {
+                    if (!node || !node.childNodes || node.childNodes.length !== 1) { return; }
+                    var text = String(node.textContent || '').trim();
+                    if (!text) { return; }
+                    if (/telegram/i.test(text) && text.length <= 120) {
+                      node.textContent = text
+                        .replace(/telegram web/gi, 'FlyGram')
+                        .replace(/telegram/gi, 'FlyGram');
+                    }
+                  });
+                });
+              };
+
               var applyCustomizations = function() {
                 if (custom.hideStories) {
                   document.querySelectorAll('[class*=\"story\"], [class*=\"Story\"], [data-tab=\"stories\"]').forEach(function(node) {
@@ -985,22 +1091,62 @@ class MainActivity : ComponentActivity() {
                   });
                 }
                 if (!custom.md3Effects) { return; }
-                if (!document.getElementById('tgweb-md3-patch')) {
-                  var style = document.createElement('style');
+                var bodyStyles = getComputedStyle(document.body || document.documentElement);
+                var rootBg = colorFromCss(bodyStyles.backgroundColor || '#0e1621');
+                var isLightTheme = luminance(rootBg) > 0.62;
+                var textColor = isLightTheme ? '#102030' : '#e9f3ff';
+                var mutedTextColor = blendHex(textColor, rootBg, isLightTheme ? 0.45 : 0.35);
+                var containerBg = blendHex(rootBg, textColor, isLightTheme ? 0.035 : 0.07);
+                var dividerColor = blendHex(rootBg, textColor, isLightTheme ? 0.16 : 0.24);
+                var accentColor = custom.md3Accent && custom.md3Accent.length === 7 ? custom.md3Accent : '#3390ec';
+                var containerCss = custom.containerStyle === 'dividers'
+                  ? 'margin:0 !important;border-radius:0 !important;border:0 !important;border-top:1px solid var(--flygram-divider) !important;'
+                  : 'margin:6px 10px !important;border-radius:14px !important;border:1px solid var(--flygram-divider) !important;';
+
+                var style = document.getElementById('tgweb-md3-patch');
+                if (!style) {
+                  style = document.createElement('style');
                   style.id = 'tgweb-md3-patch';
-                  style.textContent =
-                    ':root{--tgweb-md3-accent:' + custom.md3Accent + ';}' +
-                    '.chatlist,.chat,.sidebar,.popup,.row,.btn-primary,.btn-primary-transparent{' +
-                      'border-radius:16px !important;' +
-                    '}' +
-                    '.row,.popup,.chat-input,.new-message-wrapper,.media-viewer{' +
-                      'backdrop-filter:saturate(1.15);' +
-                    '}' +
-                    '.btn-primary,.btn-primary-transparent{' +
-                      'background:color-mix(in srgb, var(--tgweb-md3-accent) 82%, white 18%) !important;' +
-                    '}';
                   document.head.appendChild(style);
                 }
+                style.textContent =
+                  ':root{' +
+                    '--flygram-bg:' + rootBg + ';' +
+                    '--flygram-text:' + textColor + ';' +
+                    '--flygram-muted:' + mutedTextColor + ';' +
+                    '--flygram-container:' + containerBg + ';' +
+                    '--flygram-divider:' + dividerColor + ';' +
+                    '--flygram-accent:' + accentColor + ';' +
+                  '}' +
+                  'body,#root,.app-wrapper,.left-sidebar,.chat,.chat-background{' +
+                    'background:var(--flygram-bg) !important;' +
+                    'color:var(--flygram-text) !important;' +
+                  '}' +
+                  '.settings-container .row,.settings-content .row,.profile-buttons .row,' +
+                  '.btn-menu .btn-menu-item,.menu-item,.row.no-subtitle{' +
+                    containerCss +
+                    'background:var(--flygram-container) !important;' +
+                    'color:var(--flygram-text) !important;' +
+                  '}' +
+                  '.settings-container .row-title,.settings-container .row-subtitle,' +
+                  '.btn-menu-item-text,.btn-menu-item-auxiliary-text,.subtitle,.description{' +
+                    'color:var(--flygram-text) !important;' +
+                  '}' +
+                  '.settings-container .row-subtitle,.btn-menu-item-auxiliary-text,.subtitle{' +
+                    'color:var(--flygram-muted) !important;' +
+                  '}' +
+                  '.btn-primary,.btn-primary-transparent,.tgweb-auth-import-actions button{' +
+                    'border-radius:12px !important;' +
+                    'border:0 !important;' +
+                    'background:linear-gradient(135deg, var(--flygram-accent), ' + blendHex(accentColor, '#ffffff', 0.20) + ') !important;' +
+                    'color:#fff !important;' +
+                  '}' +
+                  '.btn-menu .btn-menu-item + .btn-menu-item{' +
+                    'border-top:1px solid var(--flygram-divider) !important;' +
+                  '}' +
+                  '.popup,.chat-info,.media-viewer{' +
+                    'border-radius:18px !important;' +
+                  '}';
               };
 
               var activeDownloads = {};
@@ -1016,11 +1162,11 @@ class MainActivity : ComponentActivity() {
               };
 
               var removeMoreMenuEntry = function() {
-                document.querySelectorAll('.menu-item,.btn-menu-item,.row').forEach(function(node) {
-                  var text = String(node.textContent || '').trim().toLowerCase();
-                  if (!text) { return; }
-                  if (text === 'ещё' || text === 'more') {
-                    hideNode(node);
+                document.querySelectorAll('.btn-menu-item,.menu-item,.row').forEach(function(node) {
+                  var labelNode = node.querySelector ? node.querySelector('.btn-menu-item-text,.row-title,.title') : null;
+                  var text = String((labelNode ? labelNode.textContent : node.textContent) || '').trim().toLowerCase();
+                  if (text === 'ещё' || text === 'more' || text === 'еще') {
+                    hideNode(node.closest('.btn-menu-item,.menu-item,.row') || node);
                   }
                 });
               };
@@ -1040,7 +1186,7 @@ class MainActivity : ComponentActivity() {
 
                 var title = document.createElement('div');
                 title.className = 'row-title';
-                title.textContent = 'Настройки мода';
+                title.textContent = 'Настройки FlyGram';
                 title.style.fontWeight = '600';
 
                 row.append(icon, title);
@@ -1051,6 +1197,44 @@ class MainActivity : ComponentActivity() {
                 }, { passive: false });
 
                 buttonsRoot.insertBefore(row, buttonsRoot.firstChild || null);
+              };
+
+              var ensureAuthorChannelEntry = function() {
+                var buttonsRoot = document.querySelector('.settings-container .profile-buttons');
+                if (!buttonsRoot) { return; }
+                if (buttonsRoot.querySelector('.tgweb-author-channel-row')) { return; }
+
+                var row = document.createElement('div');
+                row.className = 'row no-subtitle row-with-icon row-with-padding tgweb-author-channel-row';
+                row.style.background = 'linear-gradient(90deg, rgba(51,144,236,.22), rgba(96,191,255,.18))';
+                row.style.borderRadius = '12px';
+
+                var icon = document.createElement('span');
+                icon.className = 'row-icon';
+                icon.textContent = '⭐';
+                icon.style.fontSize = '16px';
+
+                var title = document.createElement('div');
+                title.className = 'row-title';
+                title.textContent = 'Канал Автора';
+                title.style.fontWeight = '700';
+
+                var handleOpen = function(e) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  send('${BridgeCommandTypes.OPEN_AUTHOR_CHANNEL}', { username: 'plugin_ai' });
+                };
+
+                row.append(icon, title);
+                row.addEventListener('click', handleOpen, { passive: false });
+                row.addEventListener('touchend', handleOpen, { passive: false });
+
+                var modRow = buttonsRoot.querySelector('.tgweb-mod-settings-row');
+                if (modRow && modRow.nextSibling) {
+                  buttonsRoot.insertBefore(row, modRow.nextSibling);
+                } else {
+                  buttonsRoot.appendChild(row);
+                }
               };
 
               var ensureDownloadsButton = function() {
@@ -1104,22 +1288,69 @@ class MainActivity : ComponentActivity() {
               var ensureAuthImportButtons = function() {
                 var authPages = document.getElementById('auth-pages') ||
                   document.querySelector('.auth-pages, .login-page, [class*=\"loginPage\"], [class*=\"pageSign\"]');
+                var authPage = authPages && authPages.querySelector
+                  ? authPages.querySelector('.page.active, .page-signIn, .page-signQR, .page-signUp, .page-authCode, .page-password, [class*=\"page-sign\"]')
+                  : null;
                 var existing = document.querySelector('.tgweb-auth-import-actions');
+                var existingBranding = document.querySelector('.flygram-auth-branding');
                 if (!authPages) {
                   if (existing) { existing.remove(); }
+                  if (existingBranding) { existingBranding.remove(); }
                   return;
                 }
 
-                var isVisible = window.getComputedStyle(authPages).display !== 'none' && authPages.offsetParent !== null;
-                if (!isVisible) {
+                var isVisible = window.getComputedStyle(authPages).display !== 'none';
+                var isAuthMode = document.body.classList.contains('has-auth-pages') || !!authPage;
+                if (!isVisible || !isAuthMode) {
                   if (existing) { existing.remove(); }
+                  if (existingBranding) { existingBranding.remove(); }
                   return;
                 }
 
                 if (existing) { return; }
 
-                var target = authPages.querySelector('.scrollable-content, .tabs-container') || authPages;
+                var target = (authPage && authPage.querySelector && authPage.querySelector('.container')) ||
+                  authPages.querySelector('.container, .scrollable-content, .tabs-container, .auth-placeholder') ||
+                  authPages;
                 if (!target) { return; }
+
+                var branding = document.querySelector('.flygram-auth-branding');
+                if (!branding) {
+                  branding = document.createElement('div');
+                  branding.className = 'flygram-auth-branding';
+                  branding.style.display = 'flex';
+                  branding.style.flexDirection = 'column';
+                  branding.style.alignItems = 'center';
+                  branding.style.gap = '8px';
+                  branding.style.margin = '6px auto 12px';
+
+                  var logo = document.createElement('img');
+                  logo.alt = 'FlyGram';
+                  logo.style.width = '74px';
+                  logo.style.height = '74px';
+                  logo.style.objectFit = 'contain';
+                  logo.style.borderRadius = '20px';
+                  logo.style.filter = 'drop-shadow(0 6px 14px rgba(51,144,236,.28))';
+                  if (flygramAuthLogo && flygramAuthLogo.length > 32) {
+                    logo.src = flygramAuthLogo;
+                  }
+
+                  var title = document.createElement('div');
+                  title.textContent = 'FlyGram';
+                  title.style.fontSize = '22px';
+                  title.style.fontWeight = '700';
+                  title.style.letterSpacing = '.3px';
+
+                  var subtitle = document.createElement('div');
+                  subtitle.textContent = 'FlyGram Web mod for Android';
+                  subtitle.style.fontSize = '13px';
+                  subtitle.style.opacity = '.72';
+
+                  branding.appendChild(logo);
+                  branding.appendChild(title);
+                  branding.appendChild(subtitle);
+                  target.insertBefore(branding, target.firstChild || null);
+                }
 
                 var wrap = document.createElement('div');
                 wrap.className = 'tgweb-auth-import-actions';
@@ -1152,8 +1383,8 @@ class MainActivity : ComponentActivity() {
                   return btn;
                 };
 
-                wrap.appendChild(makeButton('Импорт Session', '${SessionToolsActivity.ACTION_IMPORT_SESSION}'));
-                wrap.appendChild(makeButton('Импорт tdata', '${SessionToolsActivity.ACTION_IMPORT_TDATA}'));
+                wrap.appendChild(makeButton('Импортировать Session', '${SessionToolsActivity.ACTION_IMPORT_SESSION}'));
+                wrap.appendChild(makeButton('Импортировать tdata', '${SessionToolsActivity.ACTION_IMPORT_TDATA}'));
 
                 target.appendChild(wrap);
               };
@@ -1205,8 +1436,10 @@ class MainActivity : ComponentActivity() {
                   '.topbar .sidebar-close-button:not(.hide), ' +
                   '.chat-info-container .sidebar-close-button:not(.hide), ' +
                   '.sidebar-header .sidebar-close-button:not(.hide), ' +
+                  '.chat-topbar .btn-icon.tgico-left, .chat-topbar .sidebar-close-button, ' +
                   'button[aria-label*=\"Back\"], button[aria-label*=\"Назад\"], ' +
-                  '.topbar button.btn-icon.tgico-left, .chat-info-container .btn-icon.tgico-left'
+                  '.topbar button.btn-icon.tgico-left, .chat-info-container .btn-icon.tgico-left, ' +
+                  '.chat-info-container .btn-icon, .topbar .btn-icon'
                 );
               };
 
@@ -1216,11 +1449,22 @@ class MainActivity : ComponentActivity() {
                   btn.click();
                   return true;
                 }
+                try {
+                  if (window.history && window.history.length > 1) {
+                    window.history.back();
+                    return true;
+                  }
+                } catch (e) {}
                 return false;
               };
 
               var hasOpenDialog = function() {
-                return !!findChatCloseButton();
+                if (findChatCloseButton()) { return true; }
+                var hash = String(location.hash || '');
+                if (hash && hash !== '#' && hash !== '#/' && (hash.indexOf('@') >= 0 || hash.indexOf('/c/') >= 0)) {
+                  return true;
+                }
+                return !!document.querySelector('.chat-topbar .peer-title, .chat-input .input-message-input');
               };
 
               var isMediaViewerOpen = function() {
@@ -1255,23 +1499,37 @@ class MainActivity : ComponentActivity() {
 
               var openMainMenuFromSwipe = function() {
                 var selectors = [
+                  '.left-header .btn-icon.tgico-menu',
+                  '.left-header .btn-menu-toggle',
+                  '.left-sidebar .btn-menu-toggle',
+                  '.left-header .btn-icon[aria-label*=\"Menu\"]',
+                  '.left-header .btn-icon[aria-label*=\"Меню\"]',
                   '.left-header button[aria-label*=\"Menu\"]',
                   '.left-header button[aria-label*=\"Меню\"]',
-                  'button[aria-label*=\"More\"]',
+                  '.left-header button[aria-label*=\"More\"]',
                   'button[aria-label*=\"Menu\"]',
+                  '.left-header button .tgico-menu',
                   '.left-header .tgico-more',
                   '.left-header .tgico-menu',
                   '.left-header .btn-menu',
-                  '.left-sidebar .btn-menu',
-                  '.left-header .btn-icon'
+                  '.left-sidebar .btn-menu'
                 ];
                 for (var i = 0; i < selectors.length; i++) {
                   var node = document.querySelector(selectors[i]);
                   var clickable = findClickable(node);
+                  if (clickable && clickable.classList && clickable.classList.contains('tgweb-downloads-button')) {
+                    continue;
+                  }
                   if (clickable && typeof clickable.click === 'function') {
                     clickable.click();
                     return true;
                   }
+                }
+                var fallback = document.querySelector('.left-header button:not(.tgweb-downloads-button), .left-header .btn-icon:not(.tgweb-downloads-button)');
+                var fallbackClickable = findClickable(fallback);
+                if (fallbackClickable && typeof fallbackClickable.click === 'function') {
+                  fallbackClickable.click();
+                  return true;
                 }
                 return false;
               };
@@ -1376,18 +1634,22 @@ class MainActivity : ComponentActivity() {
               applyScale(${scale});
               removeSwitchLinks();
               removeMoreMenuEntry();
+              replaceVisibleBranding();
               applyCustomizations();
               syncSystemBars();
               ensureModSettingsEntry();
+              ensureAuthorChannelEntry();
               ensureDownloadsButton();
               ensureAuthImportButtons();
               bindProxyLinkIntercept();
 
               setInterval(removeSwitchLinks, 1800);
               setInterval(removeMoreMenuEntry, 1800);
+              setInterval(replaceVisibleBranding, 2200);
               setInterval(applyCustomizations, 2400);
               setInterval(syncSystemBars, 2000);
               setInterval(ensureModSettingsEntry, 1200);
+              setInterval(ensureAuthorChannelEntry, 1600);
               setInterval(ensureDownloadsButton, 1500);
               setInterval(ensureAuthImportButtons, 1200);
             })();
@@ -1556,7 +1818,7 @@ class MainActivity : ComponentActivity() {
         private const val BUNDLED_WEBK_URL = "file:///android_asset/webapp/webk/index.html"
         private const val BUNDLED_WEBK_SRC_PUBLIC_URL = "file:///android_asset/webapp/webk-src/public/index.html"
         private const val REMOTE_WEBK_URL = "https://web.telegram.org/k/"
-        private const val OFFLINE_CACHE_FILE_NAME = "tgweb_offline_main.html"
-        private const val OFFLINE_ARCHIVE_FILE_NAME = "tgweb_offline_page.mht"
+        private const val OFFLINE_CACHE_FILE_NAME = "flygram_offline_main.html"
+        private const val OFFLINE_ARCHIVE_FILE_NAME = "flygram_offline_page.mht"
     }
 }

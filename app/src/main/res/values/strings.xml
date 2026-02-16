@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">TGWeb</string>
+    <string name="app_name">FlyGram</string>
 
-    <string name="mod_settings_title">Настройки мода</string>
+    <string name="mod_settings_title">Настройки FlyGram</string>
     <string name="mod_category_runtime">Интерфейс и фон</string>
     <string name="mod_category_network">Сеть</string>
     <string name="mod_category_web">WebView</string>
@@ -23,8 +23,8 @@
     <string name="mod_customization_title">Кастомизация</string>
     <string name="mod_customization_summary">Жесты, Stories, MD3-стиль и динамический цвет</string>
     <string name="mod_downloads_title">Загрузки</string>
-    <string name="mod_downloads_summary">Локальный кеш и экспорт в Downloads/tgweb_downloads</string>
-    <string name="mod_bundled_web_title">Использовать bundled Telegram Web</string>
+    <string name="mod_downloads_summary">Локальный кеш и экспорт в Downloads/flygram_downloads</string>
+    <string name="mod_bundled_web_title">Использовать bundled FlyGram Web</string>
     <string name="mod_bundled_web_summary">Если отключено, загружается web.telegram.org/k/</string>
     <string name="mod_version_title">Версия</string>
 
@@ -61,15 +61,15 @@
     <string name="downloads_title">Загрузки</string>
     <string name="downloads_refresh">Обновить список</string>
     <string name="downloads_empty">Кеш загрузок пока пуст</string>
-    <string name="downloads_action_export">Сохранить в Downloads/tgweb_downloads</string>
+    <string name="downloads_action_export">Сохранить в Downloads/flygram_downloads</string>
     <string name="downloads_action_delete_cache">Удалить из кеша</string>
-    <string name="downloads_export_done">Файл сохранён в Downloads/tgweb_downloads</string>
+    <string name="downloads_export_done">Файл сохранён в Downloads/flygram_downloads</string>
     <string name="downloads_export_failed">Не удалось сохранить файл</string>
     <string name="downloads_delete_done">Файл удалён из кеша</string>
     <string name="downloads_delete_failed">Не удалось удалить файл из кеша</string>
 
     <string name="session_tools_title">Сессия и tdata</string>
-    <string name="session_tools_description">Инструменты для переноса профиля Telegram Web. Импорт применяется после перезапуска приложения.</string>
+    <string name="session_tools_description">Инструменты для переноса профиля FlyGram Web. Импорт применяется после перезапуска приложения.</string>
     <string name="session_tools_import_title">Импорт</string>
     <string name="session_tools_export_title">Экспорт</string>
     <string name="session_tools_import_session">Импорт Session backup</string>
@@ -93,6 +93,9 @@
     <string name="custom_hide_stories">Скрыть Stories в интерфейсе</string>
     <string name="custom_md3_effects">MD3-эффекты (скругления и контейнеры)</string>
     <string name="custom_dynamic_color">Динамический цвет Android</string>
+    <string name="custom_container_style">Стиль MD3-контейнеров</string>
+    <string name="custom_container_style_segmented">Сегменты</string>
+    <string name="custom_container_style_dividers">Разделители</string>
 
     <string name="debug_tools_title">Debug tools</string>
     <string name="debug_test_notification">Тест уведомлений</string>

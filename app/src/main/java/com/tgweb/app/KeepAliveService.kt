@@ -38,7 +38,7 @@ class KeepAliveService : Service() {
         val tint = contextColor(this)
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_notify_sync)
-            .setContentTitle("TGWeb keep alive")
+            .setContentTitle("FlyGram keep alive")
             .setContentText("Background sync and push relay are active")
             .setColor(tint)
             .setColorized(true)
@@ -56,7 +56,7 @@ class KeepAliveService : Service() {
             "Keep alive",
             NotificationManager.IMPORTANCE_LOW,
         ).apply {
-            description = "Keeps TGWeb background service alive for sync/push reliability."
+            description = "Keeps FlyGram background service alive for sync/push reliability."
             setShowBadge(false)
         }
         manager.createNotificationChannel(channel)
@@ -74,6 +74,7 @@ class KeepAliveService : Service() {
         const val KEY_HIDE_STORIES = "hide_stories"
         const val KEY_MD3_EFFECTS = "md3_effects"
         const val KEY_DYNAMIC_COLOR = "dynamic_color"
+        const val KEY_MD3_CONTAINER_STYLE = "md3_container_style"
 
         private const val CHANNEL_ID = "tgweb_keep_alive"
         private const val NOTIFICATION_ID = 10102

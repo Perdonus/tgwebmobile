@@ -155,9 +155,9 @@ class AndroidNotificationService(
 
         val manager = context.getSystemService(NotificationManager::class.java)
         val channels = listOf(
-            NotificationChannel(CHANNEL_MESSAGES, "Messages", NotificationManager.IMPORTANCE_HIGH),
-            NotificationChannel(CHANNEL_SILENT, "Silent", NotificationManager.IMPORTANCE_LOW),
-            NotificationChannel(CHANNEL_DOWNLOADS, "Downloads", NotificationManager.IMPORTANCE_DEFAULT),
+            NotificationChannel(CHANNEL_MESSAGES, "FlyGram Messages", NotificationManager.IMPORTANCE_HIGH),
+            NotificationChannel(CHANNEL_SILENT, "FlyGram Silent", NotificationManager.IMPORTANCE_LOW),
+            NotificationChannel(CHANNEL_DOWNLOADS, "FlyGram Downloads", NotificationManager.IMPORTANCE_DEFAULT),
         )
         manager.createNotificationChannels(channels)
     }
@@ -166,8 +166,8 @@ class AndroidNotificationService(
         private const val PREFS = "tgweb_runtime"
         private const val KEY_BACKEND_BASE_URL = "push_backend_url"
         private const val KEY_NOTIFICATION_COLOR = "notification_color"
-        const val CHANNEL_MESSAGES = "tgweb_messages"
-        const val CHANNEL_SILENT = "tgweb_silent"
-        const val CHANNEL_DOWNLOADS = "tgweb_downloads"
+        const val CHANNEL_MESSAGES = "flygram_messages"
+        const val CHANNEL_SILENT = "flygram_silent"
+        const val CHANNEL_DOWNLOADS = "flygram_downloads"
     }
 }

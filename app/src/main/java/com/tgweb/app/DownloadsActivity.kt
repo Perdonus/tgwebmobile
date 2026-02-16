@@ -106,7 +106,7 @@ class DownloadsActivity : AppCompatActivity() {
 
     private fun exportToDownloads(fileId: String) {
         lifecycleScope.launch {
-            val result = AppRepositories.mediaRepository.downloadToPublicStorage(fileId, "tgweb_downloads")
+            val result = AppRepositories.mediaRepository.downloadToPublicStorage(fileId, "flygram_downloads")
             if (result.isSuccess) {
                 showToast(getString(R.string.downloads_export_done))
             } else {

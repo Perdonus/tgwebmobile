@@ -262,7 +262,7 @@ object SessionBackupManager {
     fun buildDefaultFileName(format: BackupFormat): String {
         val date = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
         val suffix = if (format == BackupFormat.SESSION) "session" else "tdata"
-        return "tgweb_${suffix}_$date.zip"
+        return "flygram_${suffix}_$date.zip"
     }
 
     private fun detectImportFormat(
