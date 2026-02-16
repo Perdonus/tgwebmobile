@@ -19,6 +19,7 @@ import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.webkit.HttpAuthHandler
 import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
 import android.webkit.URLUtil
@@ -157,7 +158,8 @@ class MainActivity : ComponentActivity() {
             WebSettings.LOAD_CACHE_ELSE_NETWORK
         }
         lifecycleScope.launch {
-            applyProxyToWebView(AppRepositories.getProxyState())
+            runCatching { applyProxyToWebView(AppRepositories.getProxyState()) }
+                .onFailure { Log.w(TAG, "Unable to apply proxy on resume", it) }
             AppRepositories.postProxyState()
             AppRepositories.postKeepAliveState(KeepAliveService.isEnabled(this@MainActivity))
         }
@@ -297,7 +299,8 @@ class MainActivity : ComponentActivity() {
                 cacheCurrentMainFrameHtml(url)
                 injectBootstrap()
                 injectMobileEnhancements()
-                applyProxyToWebView(AppRepositories.getProxyState())
+                runCatching { applyProxyToWebView(AppRepositories.getProxyState()) }
+                    .onFailure { Log.w(TAG, "Unable to apply proxy on page finish", it) }
                 hideLoadingOverlayWithMinimumDuration()
             }
 
@@ -325,6 +328,29 @@ class MainActivity : ComponentActivity() {
                 if (isNetworkAvailable()) return
                 attemptedOfflineFallback = true
                 loadOfflineFallbackPage()
+            }
+
+            override fun onReceivedHttpAuthRequest(
+                view: WebView?,
+                handler: HttpAuthHandler?,
+                host: String?,
+                realm: String?,
+            ) {
+                val proxy = AppRepositories.getProxyState()
+                val username = proxy.username
+                val password = proxy.password
+                if (
+                    proxy.enabled &&
+                    proxy.type != ProxyType.MTPROTO &&
+                    !username.isNullOrBlank() &&
+                    !password.isNullOrBlank() &&
+                    !host.isNullOrBlank() &&
+                    host.equals(proxy.host, ignoreCase = true)
+                ) {
+                    handler?.proceed(username, password)
+                    return
+                }
+                super.onReceivedHttpAuthRequest(view, handler, host, realm)
             }
         }
 
@@ -1461,10 +1487,33 @@ class MainActivity : ComponentActivity() {
               var hasOpenDialog = function() {
                 if (findChatCloseButton()) { return true; }
                 var hash = String(location.hash || '');
-                if (hash && hash !== '#' && hash !== '#/' && (hash.indexOf('@') >= 0 || hash.indexOf('/c/') >= 0)) {
+                if (hash && hash !== '#' && hash !== '#/' && (hash.indexOf('@') >= 0 || hash.indexOf('/c/') >= 0 || hash.indexOf('-100') >= 0)) {
                   return true;
                 }
                 return !!document.querySelector('.chat-topbar .peer-title, .chat-input .input-message-input');
+              };
+
+              var isSettingsLikeOpen = function() {
+                return !!document.querySelector(
+                  '.settings-container, .profile-container, .shared-media-container, ' +
+                  '.btn-menu.active, .popup-peer, .sidebar-slider .sidebar-slider-item.active .settings'
+                );
+              };
+
+              var isDialogScreenActive = function() {
+                if (!hasOpenDialog()) { return false; }
+                var hash = String(location.hash || '').toLowerCase();
+                if (
+                  hash.indexOf('settings') >= 0 ||
+                  hash.indexOf('folders') >= 0 ||
+                  hash.indexOf('contacts') >= 0 ||
+                  hash.indexOf('proxy') >= 0 ||
+                  hash.indexOf('downloads') >= 0 ||
+                  hash.indexOf('calls') >= 0
+                ) {
+                  return false;
+                }
+                return !!document.querySelector('.chat-main .bubbles, .chat-input .input-message-input, .chat-topbar .peer-title');
               };
 
               var isMediaViewerOpen = function() {
@@ -1535,7 +1584,14 @@ class MainActivity : ComponentActivity() {
               };
 
               var isMainListScreen = function() {
-                return !hasOpenDialog();
+                return !isDialogScreenActive() && !isSettingsLikeOpen();
+              };
+
+              var isInsideGestureIgnoredArea = function(node) {
+                return !!(node && node.closest && node.closest(
+                  '.settings-container, .profile-container, .btn-menu, .popup, ' +
+                  '.input-message-container, .composer, textarea, input, select'
+                ));
               };
 
               var lastTapTs = 0;
@@ -1588,25 +1644,34 @@ class MainActivity : ComponentActivity() {
                 var dy = touch.clientY - touchStartY;
                 var dt = Date.now() - touchStartTs;
                 if (dt > 900) { return; }
-                if (Math.abs(dx) < 56 || Math.abs(dx) < Math.abs(dy) * 1.1) { return; }
+
+                if (isInsideGestureIgnoredArea(e.target) && !isMediaViewerOpen()) { return; }
+
+                var absDx = Math.abs(dx);
+                var absDy = Math.abs(dy);
+                if (absDx < 72 || absDx < absDy * 1.28) { return; }
+
+                var speed = absDx / Math.max(dt, 1);
 
                 if (isMediaViewerOpen()) {
-                  swipeMedia(dx < 0);
+                  if (dt <= 520 && absDx >= 78 && speed >= 0.2) {
+                    swipeMedia(dx < 0);
+                  }
                   return;
                 }
 
-                var fromRightEdge = touchStartX >= (window.innerWidth - 52);
-                if (dx < -72 && (fromRightEdge || hasOpenDialog())) {
+                var isFastLongSwipe = absDx >= 112 && dt <= 360 && speed >= 0.30;
+                if (!isFastLongSwipe) { return; }
+
+                var fromRightEdge = touchStartX >= (window.innerWidth - 28);
+                if (dx < 0 && fromRightEdge && isDialogScreenActive()) {
                   if (closeActiveChatIfPossible()) {
                     return;
                   }
                 }
 
-                var fromLeftEdge = touchStartX <= 44;
-                if (dx > 64 && (fromLeftEdge || isMainListScreen())) {
-                  if (hasOpenDialog() && closeActiveChatIfPossible()) {
-                    return;
-                  }
+                var fromLeftEdge = touchStartX <= 28;
+                if (dx > 0 && fromLeftEdge && isMainListScreen()) {
                   openMainMenuFromSwipe();
                 }
               }, { passive: true });
@@ -1732,19 +1797,27 @@ class MainActivity : ComponentActivity() {
         val executor = ContextCompat.getMainExecutor(this)
 
         if (!proxyState.enabled || proxyState.type == ProxyType.DIRECT) {
-            ProxyController.getInstance().clearProxyOverride(
-                executor,
-                { AppRepositories.postProxyState(proxyState) },
-            )
+            runCatching {
+                ProxyController.getInstance().clearProxyOverride(
+                    executor,
+                    { AppRepositories.postProxyState(proxyState) },
+                )
+            }.onFailure {
+                Log.w(TAG, "Unable to clear proxy override", it)
+            }
             return
         }
 
         val proxyRule = buildWebViewProxyRule(proxyState)
         if (proxyRule == null) {
-            ProxyController.getInstance().clearProxyOverride(
-                executor,
-                { AppRepositories.postProxyState(proxyState) },
-            )
+            runCatching {
+                ProxyController.getInstance().clearProxyOverride(
+                    executor,
+                    { AppRepositories.postProxyState(proxyState) },
+                )
+            }.onFailure {
+                Log.w(TAG, "Unable to clear proxy override", it)
+            }
             return
         }
 
@@ -1752,11 +1825,23 @@ class MainActivity : ComponentActivity() {
             .addProxyRule(proxyRule)
             .build()
 
-        ProxyController.getInstance().setProxyOverride(
-            proxyConfig,
-            executor,
-            { AppRepositories.postProxyState(proxyState) },
-        )
+        runCatching {
+            ProxyController.getInstance().setProxyOverride(
+                proxyConfig,
+                executor,
+                { AppRepositories.postProxyState(proxyState) },
+            )
+        }.onFailure {
+            Log.e(TAG, "Unable to apply WebView proxy rule: $proxyRule", it)
+            runCatching {
+                ProxyController.getInstance().clearProxyOverride(
+                    executor,
+                    { AppRepositories.postProxyState(ProxyConfigSnapshot(enabled = false, type = ProxyType.DIRECT)) },
+                )
+            }.onFailure { clearError ->
+                Log.w(TAG, "Unable to rollback proxy override after failure", clearError)
+            }
+        }
     }
 
     private fun buildWebViewProxyRule(proxyState: ProxyConfigSnapshot): String? {
@@ -1766,15 +1851,8 @@ class MainActivity : ComponentActivity() {
             ProxyType.MTPROTO -> "socks" // compatibility fallback for WebView transport
             ProxyType.DIRECT -> return null
         }
-
-        val username = proxyState.username.orEmpty()
-        val password = proxyState.password.orEmpty()
-        val credentials = if (username.isBlank() && password.isBlank()) {
-            ""
-        } else {
-            "${Uri.encode(username)}:${Uri.encode(password)}@"
-        }
-        return "$scheme://$credentials${proxyState.host}:${proxyState.port}"
+        // WebView ProxyController rejects credentials in proxy URL.
+        return "$scheme://${proxyState.host}:${proxyState.port}"
     }
 
     private fun isNetworkAvailable(): Boolean {
