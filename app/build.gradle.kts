@@ -88,3 +88,13 @@ dependencies {
     implementation("com.google.android.material:material:1.12.0")
     implementation("com.google.firebase:firebase-messaging-ktx:24.1.0")
 }
+
+val hasGoogleServices = file("google-services.json").exists() ||
+    file("src/debug/google-services.json").exists() ||
+    file("src/release/google-services.json").exists()
+
+if (hasGoogleServices) {
+    apply(plugin = "com.google.gms.google-services")
+} else {
+    logger.lifecycle("google-services.json not found, skipping com.google.gms.google-services plugin")
+}

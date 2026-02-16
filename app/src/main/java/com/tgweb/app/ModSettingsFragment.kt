@@ -4,15 +4,11 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.graphics.Color
-import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
 import android.util.TypedValue
 import android.view.View
-import android.widget.TextView
 import androidx.core.content.ContextCompat
-import androidx.core.graphics.ColorUtils
 import androidx.preference.Preference
 import androidx.preference.PreferenceGroupAdapter
 import androidx.preference.PreferenceFragmentCompat
@@ -209,71 +205,7 @@ class ModSettingsFragment : PreferenceFragmentCompat() {
     private fun applyExpressiveSettingsStyle() {
         val recycler = listView ?: return
         recycler.clipToPadding = false
-        recycler.setPadding(dp(10), dp(8), dp(10), dp(20))
-
-        val surface = UiThemeBridge.resolveSettingsSurfaceColor(requireActivity())
-        val textPrimary = if (UiThemeBridge.isLight(surface)) Color.parseColor("#152235") else Color.parseColor("#EAF3FF")
-        val textMuted = if (UiThemeBridge.isLight(surface)) Color.parseColor("#5D7088") else Color.parseColor("#9CB3CE")
-        val cardColor = if (UiThemeBridge.isLight(surface)) {
-            ColorUtils.blendARGB(surface, Color.WHITE, 0.22f)
-        } else {
-            ColorUtils.blendARGB(surface, Color.WHITE, 0.08f)
-        }
-        val strokeColor = if (UiThemeBridge.isLight(surface)) {
-            ColorUtils.blendARGB(surface, Color.BLACK, 0.10f)
-        } else {
-            ColorUtils.blendARGB(surface, Color.WHITE, 0.14f)
-        }
-
-        fun applyRowStyle(row: View) {
-            val title = row.findViewById<TextView>(android.R.id.title)
-            val summary = row.findViewById<TextView>(android.R.id.summary)
-            val isCategory = !row.isClickable && summary == null
-
-            if (isCategory) {
-                row.background = null
-                (row.layoutParams as? RecyclerView.LayoutParams)?.let { lp ->
-                    lp.setMargins(dp(2), dp(14), dp(2), dp(2))
-                    row.layoutParams = lp
-                }
-                title?.apply {
-                    setTextColor(textMuted)
-                    textSize = 12f
-                    setTypeface(typeface, android.graphics.Typeface.BOLD)
-                    letterSpacing = 0.03f
-                }
-                return
-            }
-
-            val shape = GradientDrawable().apply {
-                cornerRadius = dpF(18f)
-                setColor(cardColor)
-                setStroke(dp(1), strokeColor)
-            }
-            row.background = shape
-            row.setPadding(dp(16), dp(12), dp(16), dp(12))
-            (row.layoutParams as? RecyclerView.LayoutParams)?.let { lp ->
-                lp.setMargins(dp(2), dp(6), dp(2), dp(6))
-                row.layoutParams = lp
-            }
-            title?.setTextColor(textPrimary)
-            summary?.setTextColor(textMuted)
-        }
-
-        recycler.post {
-            for (i in 0 until recycler.childCount) {
-                applyRowStyle(recycler.getChildAt(i))
-            }
-        }
-        recycler.addOnChildAttachStateChangeListener(
-            object : RecyclerView.OnChildAttachStateChangeListener {
-                override fun onChildViewAttachedToWindow(view: View) {
-                    applyRowStyle(view)
-                }
-
-                override fun onChildViewDetachedFromWindow(view: View) = Unit
-            },
-        )
+        recycler.setPadding(dp(14), dp(10), dp(14), dp(24))
     }
 
     private fun dp(value: Int): Int {
@@ -282,14 +214,6 @@ class ModSettingsFragment : PreferenceFragmentCompat() {
             value.toFloat(),
             resources.displayMetrics,
         ).toInt()
-    }
-
-    private fun dpF(value: Float): Float {
-        return TypedValue.applyDimension(
-            TypedValue.COMPLEX_UNIT_DIP,
-            value,
-            resources.displayMetrics,
-        )
     }
 
     companion object {

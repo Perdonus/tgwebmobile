@@ -84,6 +84,7 @@ class MainActivity : ComponentActivity() {
     private var lastProxySheetTsMs: Long = 0L
     private var webUiReadyForProxy: Boolean = false
     private var pendingProxyForApply: ProxyConfigSnapshot? = null
+    private var pendingOpenChannelUsername: String? = null
 
     private val runtimePrefs by lazy {
         getSharedPreferences(KeepAliveService.PREFS, Context.MODE_PRIVATE)
@@ -437,7 +438,7 @@ class MainActivity : ComponentActivity() {
                         BridgeCommandTypes.OPEN_MOD_SETTINGS -> openModSettings()
                         BridgeCommandTypes.OPEN_SESSION_TOOLS -> openSessionTools(command.payload["mode"])
                         BridgeCommandTypes.OPEN_PROXY_PREVIEW -> showProxyBottomSheet(command.payload["url"])
-                        BridgeCommandTypes.OPEN_AUTHOR_CHANNEL -> openAuthorChannel()
+                        BridgeCommandTypes.OPEN_AUTHOR_CHANNEL -> openAuthorChannel(command.payload["username"])
                         BridgeCommandTypes.WEB_UI_READY -> onWebUiReady(command.payload)
                         BridgeCommandTypes.SET_PROXY -> handleProxyCommand(command)
                         BridgeCommandTypes.GET_PROXY_STATUS -> AppRepositories.postProxyState()
@@ -780,13 +781,27 @@ class MainActivity : ComponentActivity() {
         startActivity(Intent(this, ModSettingsActivity::class.java))
     }
 
-    private fun openAuthorChannel(username: String = "plugin_ai") {
-        val channelHash = "@${username.trimStart('@')}"
-        val channelUrl = "${REMOTE_WEBK_URL}#$channelHash"
+    private fun openAuthorChannel(username: String? = "plugin_ai", allowDeferUntilWebUiReady: Boolean = true) {
+        val normalized = username?.trim()?.trimStart('@').orEmpty().ifBlank { "plugin_ai" }
+        if (allowDeferUntilWebUiReady && !webUiReadyForProxy) {
+            pendingOpenChannelUsername = normalized
+            DebugLogStore.log("WEB", "Author channel open deferred until WEB_UI_READY: @$normalized")
+            return
+        }
+        pendingOpenChannelUsername = null
+
+        val channelHash = "@$normalized"
+        val hashRoute = "/im?p=%40$normalized"
+        val channelUrl = "${REMOTE_WEBK_URL}#$hashRoute"
         val script = """
             (function() {
               try {
-                location.hash = '${channelHash}';
+                location.hash = '${hashRoute}';
+                setTimeout(function() {
+                  try {
+                    location.hash = '${channelHash}';
+                  } catch (_) {}
+                }, 80);
                 return true;
               } catch (e) {
                 return false;
@@ -1041,6 +1056,9 @@ class MainActivity : ComponentActivity() {
                         "Apply after WEB_UI_READY failed: ${error::class.java.simpleName}: ${error.message}",
                     )
                 }
+            pendingOpenChannelUsername?.let { queuedChannel ->
+                openAuthorChannel(queuedChannel, allowDeferUntilWebUiReady = false)
+            }
         }
     }
 
@@ -1203,9 +1221,9 @@ class MainActivity : ComponentActivity() {
                 replyAutoFocus: ${if (replyAutoFocus) "true" else "false"}
               };
               var flygramAuthLogo = $authLogoQuoted;
-              var flygramAuthSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160" viewBox="0 0 160 160" aria-label="FlyGram Logo">' +
-                '<image href="' + (flygramAuthLogo || '') + '" x="0" y="0" width="160" height="160" preserveAspectRatio="xMidYMid slice" />' +
-              '</svg>';
+              var flygramAuthImg = (flygramAuthLogo && flygramAuthLogo.length > 24)
+                ? ('<img class=\"flygram-auth-logo-image\" src=\"' + flygramAuthLogo + '\" alt=\"FlyGram\" />')
+                : '';
 
               var send = function(type, payload) {
                 try {
@@ -1574,15 +1592,15 @@ class MainActivity : ComponentActivity() {
                   groupsCssBlock +
                   '.settings-container .row,.settings-content .row,.profile-buttons .row,' +
                   '.btn-menu .btn-menu-item,.popup .btn-menu-item,.menu-item,.row.no-subtitle,' +
-                  '.left-sidebar .btn-menu-item,.profile-content .row,[class*=\"btn-menu-item\"]{' +
+                  '.left-sidebar .btn-menu-item,.profile-content .row{' +
                     rowCss +
                     rowBgCss +
                     'color:var(--flygram-text) !important;' +
                   '}' +
                   '.btn-menu,.popup{' +
-                    'max-width:min(92vw, 360px) !important;' +
+                    'max-width:min(88vw, 340px) !important;' +
                     'width:fit-content !important;' +
-                    'margin-inline:10px !important;' +
+                    'margin-inline:12px !important;' +
                   '}' +
                   '.btn-menu .btn-menu-item,.popup .btn-menu-item,.menu-item{' +
                     'min-height:40px !important;' +
@@ -1592,12 +1610,6 @@ class MainActivity : ComponentActivity() {
                   '.btn-menu .btn-menu-items,.popup .btn-menu-items{' +
                     'padding-top:4px !important;' +
                     'padding-bottom:4px !important;' +
-                  '}' +
-                  '[dir=\"ltr\"] .btn-menu,[dir=\"ltr\"] .popup{' +
-                    'right:10px !important;' +
-                  '}' +
-                  '[dir=\"rtl\"] .btn-menu,[dir=\"rtl\"] .popup{' +
-                    'left:10px !important;' +
                   '}' +
                   '.settings-container .row-title,.settings-container .row-subtitle,' +
                   '.btn-menu-item-text,.btn-menu-item-auxiliary-text,.subtitle,.description{' +
@@ -1831,68 +1843,55 @@ class MainActivity : ComponentActivity() {
               var ensureAuthImportButtons = function() {
                 var authRoot = document.getElementById('auth-pages') ||
                   document.querySelector('.auth-pages,.login-page,[class*=\"auth-pages\"],.page-signIn,.page-signQR,.page-signUp,.page-authCode,.page-password');
+                var chatVisible = !!document.querySelector(
+                  '.left-sidebar .chatlist .chatlist-chat,.chat-main .bubbles,.chat-input .input-message-input'
+                );
                 var authVisible = !!(authRoot &&
                   authRoot.offsetParent !== null &&
                   authRoot.getBoundingClientRect &&
                   authRoot.getBoundingClientRect().height > 120);
-                var authActivePage = authRoot && authRoot.querySelector
-                  ? authRoot.querySelector('.page.active,.page-signIn,.page-signQR,.page-signUp,.page-authCode,.page-password,.page-sign-in,.page-sign-up,[class*=\"page-sign\"],[class*=\"sign\"]')
-                  : null;
-                var authActiveVisible = !!(authActivePage && authActivePage.offsetParent !== null);
-                var authInteractive = !!(authVisible && authRoot && authRoot.querySelector &&
+                var authInteractive = !!(authRoot && authRoot.querySelector &&
                   authRoot.querySelector('input[type=\"tel\"],input[type=\"password\"],.qr-canvas,.auth-code-input'));
                 var authLogoNode = document.querySelector('.auth-image .sign-logo,.auth-image svg.sign-logo,.auth-image');
                 var authLogoVisible = !!(authLogoNode && authLogoNode.offsetParent !== null);
-                var isAuthMode = !!authRoot && (authVisible || authActiveVisible || authInteractive || authLogoVisible);
+                var hash = String(location.hash || '').toLowerCase();
+                var hashLooksAuth = !hash || hash === '#' || hash.indexOf('auth') >= 0 || hash.indexOf('login') >= 0;
+                var isAuthMode = !!authRoot && !chatVisible && (authVisible || authInteractive || authLogoVisible || hashLooksAuth);
 
                 var existing = document.querySelector('.tgweb-auth-import-actions');
                 var existingBranding = document.querySelector('.flygram-auth-branding');
+                if (existingBranding) { existingBranding.remove(); }
                 if (!isAuthMode || !authRoot) {
                   if (existing) { existing.remove(); }
-                  if (existingBranding) { existingBranding.remove(); }
                   return;
                 }
 
+                var authStyle = document.getElementById('flygram-auth-style');
+                if (!authStyle) {
+                  authStyle = document.createElement('style');
+                  authStyle.id = 'flygram-auth-style';
+                  authStyle.textContent =
+                    '.auth-image{display:flex !important;align-items:center !important;justify-content:center !important;}' +
+                    '.flygram-auth-logo-wrap{' +
+                      'width:160px;height:160px;border-radius:50%;overflow:hidden;' +
+                      'display:flex;align-items:center;justify-content:center;' +
+                    '}' +
+                    '.flygram-auth-logo-image{' +
+                      'width:100%;height:100%;object-fit:cover;border-radius:50%;display:block;' +
+                    '}';
+                  document.head.appendChild(authStyle);
+                }
+
                 var authImage = authRoot.querySelector('.auth-image');
-                if (authImage && flygramAuthLogo && flygramAuthLogo.length > 32) {
-                  authImage.innerHTML = flygramAuthSvg;
-                }
-
-                var branding = existingBranding || document.createElement('div');
-                branding.className = 'flygram-auth-branding';
-                branding.style.display = 'flex';
-                branding.style.flexDirection = 'column';
-                branding.style.alignItems = 'center';
-                branding.style.gap = '6px';
-                branding.style.margin = '0';
-                branding.style.pointerEvents = 'none';
-                branding.style.position = 'fixed';
-                branding.style.left = '50%';
-                branding.style.top = '12px';
-                branding.style.transform = 'translateX(-50%)';
-                branding.style.zIndex = '999999';
-                branding.style.textAlign = 'center';
-                branding.style.maxWidth = '92vw';
-
-                if (!branding.querySelector('.flygram-auth-branding-title')) {
-                  var title = document.createElement('div');
-                  title.className = 'flygram-auth-branding-title';
-                  title.textContent = 'FlyGram';
-                  title.style.fontSize = '22px';
-                  title.style.fontWeight = '700';
-                  title.style.letterSpacing = '.3px';
-
-                  var subtitle = document.createElement('div');
-                  subtitle.textContent = 'FlyGram Web mod for Android';
-                  subtitle.style.fontSize = '13px';
-                  subtitle.style.opacity = '.72';
-
-                  branding.appendChild(title);
-                  branding.appendChild(subtitle);
-                }
-
-                if (!branding.parentElement || branding.parentElement !== document.body) {
-                  document.body.appendChild(branding);
+                if (authImage && flygramAuthImg) {
+                  if (!authImage.querySelector('.flygram-auth-logo-wrap')) {
+                    authImage.innerHTML = '<div class=\"flygram-auth-logo-wrap\">' + flygramAuthImg + '</div>';
+                  } else {
+                    var logoImg = authImage.querySelector('.flygram-auth-logo-image');
+                    if (logoImg && logoImg.getAttribute('src') !== flygramAuthLogo) {
+                      logoImg.setAttribute('src', flygramAuthLogo);
+                    }
+                  }
                 }
 
                 var wrap = existing || document.createElement('div');
@@ -1905,10 +1904,14 @@ class MainActivity : ComponentActivity() {
                 wrap.style.margin = '0';
                 wrap.style.position = 'fixed';
                 wrap.style.left = '50%';
-                wrap.style.bottom = '18px';
+                wrap.style.bottom = 'max(18px, env(safe-area-inset-bottom))';
+                wrap.style.top = 'auto';
                 wrap.style.transform = 'translateX(-50%)';
                 wrap.style.zIndex = '999999';
                 wrap.style.padding = '0 8px';
+                wrap.style.pointerEvents = 'auto';
+                wrap.style.transition = 'none';
+                wrap.style.willChange = 'auto';
 
                 var makeButton = function(text, mode) {
                   var btn = document.createElement('button');

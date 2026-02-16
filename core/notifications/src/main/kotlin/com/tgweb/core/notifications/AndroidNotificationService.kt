@@ -18,7 +18,9 @@ import com.tgweb.core.data.NotificationService
 import com.tgweb.core.data.PushDebugResult
 import com.tgweb.core.webbridge.ProxyType
 import com.google.firebase.messaging.FirebaseMessaging
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.InetSocketAddress
@@ -208,71 +210,73 @@ class AndroidNotificationService(
     }
 
     private suspend fun postJsonWithTrace(path: String, body: String, tag: String): PostTrace {
-        var lastTrace = PostTrace(success = false, url = "", code = null, responseBody = "", error = "No backend URLs")
-        val proxyState = AppRepositories.getProxyState()
-        for (base in backendBaseUrls) {
-            val fullUrl = "$base$path"
-            val startedAt = System.currentTimeMillis()
-            val scheme = runCatching { URL(fullUrl).protocol.lowercase() }.getOrDefault("")
-            val host = runCatching { URL(fullUrl).host }.getOrDefault("")
-            if (scheme == "http" && !NetworkSecurityPolicy.getInstance().isCleartextTrafficPermitted(host)) {
-                val reason = "Cleartext HTTP traffic to $host is not permitted by app network policy"
-                DebugLogStore.log(tag, "Skip $fullUrl: $reason")
-                continue
-            }
-            val trace = runCatching {
-                val connection = openConnection(fullUrl, proxyState)
-                connection.requestMethod = "POST"
-                connection.connectTimeout = 12_000
-                connection.readTimeout = 15_000
-                connection.setRequestProperty("Content-Type", "application/json")
-                connection.setRequestProperty(HEADER_APP_ID, HEADER_APP_ID_VALUE)
-                val secret = BuildConfig.PUSH_SHARED_SECRET.trim()
-                val hasSecret = secret.isNotBlank()
-                if (hasSecret) {
-                    connection.setRequestProperty(HEADER_SHARED_SECRET, secret)
+        return withContext(Dispatchers.IO) {
+            var lastTrace = PostTrace(success = false, url = "", code = null, responseBody = "", error = "No backend URLs")
+            val proxyState = AppRepositories.getProxyState()
+            for (base in backendBaseUrls) {
+                val fullUrl = "$base$path"
+                val startedAt = System.currentTimeMillis()
+                val scheme = runCatching { URL(fullUrl).protocol.lowercase() }.getOrDefault("")
+                val host = runCatching { URL(fullUrl).host }.getOrDefault("")
+                if (scheme == "http" && !NetworkSecurityPolicy.getInstance().isCleartextTrafficPermitted(host)) {
+                    val reason = "Cleartext HTTP traffic to $host is not permitted by app network policy"
+                    DebugLogStore.log(tag, "Skip $fullUrl: $reason")
+                    continue
                 }
-                connection.doOutput = true
-                connection.outputStream.bufferedWriter().use { writer ->
-                    writer.write(body)
-                }
+                val trace = runCatching {
+                    val connection = openConnection(fullUrl, proxyState)
+                    connection.requestMethod = "POST"
+                    connection.connectTimeout = 12_000
+                    connection.readTimeout = 15_000
+                    connection.setRequestProperty("Content-Type", "application/json")
+                    connection.setRequestProperty(HEADER_APP_ID, HEADER_APP_ID_VALUE)
+                    val secret = BuildConfig.PUSH_SHARED_SECRET.trim()
+                    val hasSecret = secret.isNotBlank()
+                    if (hasSecret) {
+                        connection.setRequestProperty(HEADER_SHARED_SECRET, secret)
+                    }
+                    connection.doOutput = true
+                    connection.outputStream.bufferedWriter().use { writer ->
+                        writer.write(body)
+                    }
 
-                val code = connection.responseCode
-                val stream = if (code in 200..299) connection.inputStream else connection.errorStream
-                val response = runCatching {
-                    stream?.bufferedReader()?.use { it.readText() }.orEmpty()
-                }.getOrDefault("")
-                connection.disconnect()
-                val elapsed = System.currentTimeMillis() - startedAt
-                DebugLogStore.log(
-                    tag,
-                    "POST $fullUrl -> code=$code ${elapsed}ms headers(app=$HEADER_APP_ID_VALUE,auth=${if (hasSecret) "on" else "off"}) proxy=${proxyDebugSummary(proxyState)}",
-                )
-                PostTrace(
-                    success = code in 200..299,
-                    url = fullUrl,
-                    code = code,
-                    responseBody = response.take(1200),
-                    error = if (code in 200..299) null else "HTTP $code",
-                )
-            }.getOrElse { error ->
-                val elapsed = System.currentTimeMillis() - startedAt
-                DebugLogStore.log(
-                    tag,
-                    "POST $fullUrl failed in ${elapsed}ms: ${error::class.java.simpleName}: ${error.message} proxy=${proxyDebugSummary(proxyState)}",
-                )
-                PostTrace(
-                    success = false,
-                    url = fullUrl,
-                    code = null,
-                    responseBody = "",
-                    error = "${error::class.java.simpleName}: ${error.message}",
-                )
+                    val code = connection.responseCode
+                    val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+                    val response = runCatching {
+                        stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+                    }.getOrDefault("")
+                    connection.disconnect()
+                    val elapsed = System.currentTimeMillis() - startedAt
+                    DebugLogStore.log(
+                        tag,
+                        "POST $fullUrl -> code=$code ${elapsed}ms headers(app=$HEADER_APP_ID_VALUE,auth=${if (hasSecret) "on" else "off"}) proxy=${proxyDebugSummary(proxyState)}",
+                    )
+                    PostTrace(
+                        success = code in 200..299,
+                        url = fullUrl,
+                        code = code,
+                        responseBody = response.take(1200),
+                        error = if (code in 200..299) null else "HTTP $code",
+                    )
+                }.getOrElse { error ->
+                    val elapsed = System.currentTimeMillis() - startedAt
+                    DebugLogStore.log(
+                        tag,
+                        "POST $fullUrl failed in ${elapsed}ms: ${error::class.java.simpleName}: ${error.message} proxy=${proxyDebugSummary(proxyState)}",
+                    )
+                    PostTrace(
+                        success = false,
+                        url = fullUrl,
+                        code = null,
+                        responseBody = "",
+                        error = "${error::class.java.simpleName}: ${error.message}",
+                    )
+                }
+                lastTrace = trace
+                if (trace.success) return@withContext trace
             }
-            lastTrace = trace
-            if (trace.success) return trace
+            lastTrace
         }
-        return lastTrace
     }
 
     private fun openConnection(url: String, proxyState: com.tgweb.core.webbridge.ProxyConfigSnapshot): HttpURLConnection {
