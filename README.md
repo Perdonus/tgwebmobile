@@ -32,6 +32,8 @@ Core goals:
 - If local Web K bundle is absent, the shell falls back to `https://web.telegram.org/k/`.
 - If your environment has broken proxy variables, clone upstream with:
   `env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy git clone --depth=1 https://github.com/TelegramOrg/Telegram-web-k.git app/src/main/assets/webapp/webk-src`
+- APK signing is pinned to `signing/tgweb-update.jks` so debug/release updates keep the same signature across machines/Colab.
+  Override credentials with `TGWEB_STORE_PASSWORD`, `TGWEB_KEY_ALIAS`, `TGWEB_KEY_PASSWORD` if needed.
 
 ## Colab build notebook
 - Template notebook: `colab/tgwebmobile_colab_build_template.ipynb`

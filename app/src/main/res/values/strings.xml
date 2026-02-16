@@ -18,6 +18,8 @@
 
     <string name="mod_proxy_title">Прокси</string>
     <string name="mod_proxy_summary">HTTP, SOCKS5, MTProto, импорт tg:// и t.me ссылок</string>
+    <string name="mod_session_tools_title">Сессия и tdata</string>
+    <string name="mod_session_tools_summary">Импорт/экспорт профиля WebView в формате Session или tdata-bridge</string>
     <string name="mod_downloads_title">Загрузки</string>
     <string name="mod_downloads_summary">Локальный кеш и экспорт в Downloads/tgweb_downloads</string>
     <string name="mod_bundled_web_title">Использовать bundled Telegram Web</string>
@@ -57,4 +59,24 @@
     <string name="downloads_export_failed">Не удалось сохранить файл</string>
     <string name="downloads_delete_done">Файл удалён из кеша</string>
     <string name="downloads_delete_failed">Не удалось удалить файл из кеша</string>
+
+    <string name="session_tools_title">Сессия и tdata</string>
+    <string name="session_tools_description">Инструменты для переноса профиля Telegram Web. Импорт применяется после перезапуска приложения.</string>
+    <string name="session_tools_import_title">Импорт</string>
+    <string name="session_tools_export_title">Экспорт</string>
+    <string name="session_tools_import_session">Импорт Session backup</string>
+    <string name="session_tools_import_tdata">Импорт tdata backup</string>
+    <string name="session_tools_export_session">Экспорт Session backup</string>
+    <string name="session_tools_export_tdata">Экспорт tdata backup</string>
+    <string name="session_tools_idle">Ожидание действия</string>
+    <string name="session_tools_export_running">Экспорт %1$s...</string>
+    <string name="session_tools_export_done">%1$s экспорт завершён (%2$s)</string>
+    <string name="session_tools_export_done_short">%1$s экспорт сохранён</string>
+    <string name="session_tools_export_failed">Не удалось выполнить экспорт</string>
+    <string name="session_tools_import_running">Импорт %1$s...</string>
+    <string name="session_tools_import_done">%1$s импорт подготовлен (%2$s). Перезапуск...</string>
+    <string name="session_tools_import_done_short">%1$s импорт подготовлен</string>
+    <string name="session_tools_import_failed">Не удалось выполнить импорт</string>
+    <string name="session_tools_unknown_format">неизвестного формата</string>
+    <string name="session_tools_error">Ошибка: %1$s</string>
 </resources>

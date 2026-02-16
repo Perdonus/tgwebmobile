@@ -65,6 +65,12 @@
             android:label="@string/downloads_title"
             android:theme="@style/Theme.TGWeb.Settings" />
 
+        <activity
+            android:name=".SessionToolsActivity"
+            android:exported="false"
+            android:label="@string/session_tools_title"
+            android:theme="@style/Theme.TGWeb.Settings" />
+
         <service
             android:name=".KeepAliveService"
             android:enabled="true"

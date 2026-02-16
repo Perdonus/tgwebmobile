@@ -18,6 +18,7 @@ captures/
 *.keystore
 keystore.properties
 google-services.json
+!signing/tgweb-update.jks
 
 # Colab local runtime notebook (use template instead)
 colab/tgwebmobile_colab_build.ipynb

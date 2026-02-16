@@ -75,6 +75,7 @@ object BridgeCommandTypes {
     const val SET_KEEP_ALIVE = "SET_KEEP_ALIVE"
     const val GET_KEEP_ALIVE_STATE = "GET_KEEP_ALIVE_STATE"
     const val OPEN_DOWNLOADS = "OPEN_DOWNLOADS"
+    const val OPEN_SESSION_TOOLS = "OPEN_SESSION_TOOLS"
 }
 
 object BridgeEventTypes {

@@ -3,16 +3,36 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+val tgwebStoreFile = rootProject.file("signing/tgweb-update.jks")
+val tgwebStorePassword = (findProperty("TGWEB_STORE_PASSWORD") as? String)
+    ?: System.getenv("TGWEB_STORE_PASSWORD")
+    ?: "tgwebmobile"
+val tgwebKeyAlias = (findProperty("TGWEB_KEY_ALIAS") as? String)
+    ?: System.getenv("TGWEB_KEY_ALIAS")
+    ?: "tgweb"
+val tgwebKeyPassword = (findProperty("TGWEB_KEY_PASSWORD") as? String)
+    ?: System.getenv("TGWEB_KEY_PASSWORD")
+    ?: "tgwebmobile"
+
 android {
     namespace = "com.tgweb.app"
     compileSdk = 34
+
+    signingConfigs {
+        create("stable") {
+            storeFile = tgwebStoreFile
+            storePassword = tgwebStorePassword
+            keyAlias = tgwebKeyAlias
+            keyPassword = tgwebKeyPassword
+        }
+    }
 
     defaultConfig {
         applicationId = "com.tgweb.app"
         minSdk = 28
         targetSdk = 34
-        versionCode = 3
-        versionName = "1.0.2"
+        versionCode = 4
+        versionName = "1.0.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -21,7 +41,11 @@ android {
     }
 
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("stable")
+        }
         release {
+            signingConfig = signingConfigs.getByName("stable")
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),

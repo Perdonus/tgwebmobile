@@ -32,6 +32,7 @@ class MainApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        runCatching { SessionBackupManager.applyPendingImportIfNeeded(this) }
 
         val database = TelegramDatabaseFactory.create(this, passphrase = "qa-only-passphrase")
         val tdLibGateway = StubTdLibGateway()

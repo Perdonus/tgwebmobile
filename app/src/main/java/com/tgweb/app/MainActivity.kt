@@ -126,6 +126,10 @@ class MainActivity : ComponentActivity() {
         AppRepositories.postKeepAliveState(KeepAliveService.isEnabled(this))
         AppRepositories.postInterfaceScaleState(currentScalePercent())
         maybeRequestPushPermissionOnce()
+
+        SessionBackupManager.consumeLastImportAppliedNotice(this)?.let { message ->
+            Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -332,6 +336,7 @@ class MainActivity : ComponentActivity() {
                 when (command.type) {
                     BridgeCommandTypes.REQUEST_PUSH_PERMISSION -> requestNotificationPermission()
                     BridgeCommandTypes.OPEN_MOD_SETTINGS -> openModSettings()
+                    BridgeCommandTypes.OPEN_SESSION_TOOLS -> openSessionTools(command.payload["mode"])
                     BridgeCommandTypes.SET_PROXY -> handleProxyCommand(command)
                     BridgeCommandTypes.GET_PROXY_STATUS -> AppRepositories.postProxyState()
                     BridgeCommandTypes.SET_SYSTEM_UI_STYLE -> applySystemUiStyle(command.payload)
@@ -488,6 +493,20 @@ class MainActivity : ComponentActivity() {
 
     private fun openModSettings() {
         startActivity(Intent(this, ModSettingsActivity::class.java))
+    }
+
+    private fun openSessionTools(mode: String? = null) {
+        val intent = Intent(this, SessionToolsActivity::class.java).apply {
+            when (mode?.lowercase()) {
+                SessionToolsActivity.ACTION_IMPORT_SESSION -> {
+                    putExtra(SessionToolsActivity.EXTRA_ACTION_MODE, SessionToolsActivity.ACTION_IMPORT_SESSION)
+                }
+                SessionToolsActivity.ACTION_IMPORT_TDATA -> {
+                    putExtra(SessionToolsActivity.EXTRA_ACTION_MODE, SessionToolsActivity.ACTION_IMPORT_TDATA)
+                }
+            }
+        }
+        startActivity(intent)
     }
 
     private fun openDownloadsManager() {
@@ -841,6 +860,62 @@ class MainActivity : ComponentActivity() {
                 header.appendChild(button);
               };
 
+              var ensureAuthImportButtons = function() {
+                var authPages = document.getElementById('auth-pages');
+                var existing = document.querySelector('.tgweb-auth-import-actions');
+                if (!authPages) {
+                  if (existing) { existing.remove(); }
+                  return;
+                }
+
+                var isVisible = window.getComputedStyle(authPages).display !== 'none' && authPages.offsetParent !== null;
+                if (!isVisible) {
+                  if (existing) { existing.remove(); }
+                  return;
+                }
+
+                if (existing) { return; }
+
+                var target = authPages.querySelector('.scrollable-content, .tabs-container') || authPages;
+                if (!target) { return; }
+
+                var wrap = document.createElement('div');
+                wrap.className = 'tgweb-auth-import-actions';
+                wrap.style.display = 'flex';
+                wrap.style.flexDirection = 'column';
+                wrap.style.gap = '8px';
+                wrap.style.width = '100%';
+                wrap.style.maxWidth = '300px';
+                wrap.style.margin = '18px auto 0';
+
+                var makeButton = function(text, mode) {
+                  var btn = document.createElement('button');
+                  btn.type = 'button';
+                  btn.textContent = text;
+                  btn.style.width = '100%';
+                  btn.style.height = '38px';
+                  btn.style.border = '0';
+                  btn.style.borderRadius = '10px';
+                  btn.style.padding = '0 12px';
+                  btn.style.cursor = 'pointer';
+                  btn.style.fontWeight = '600';
+                  btn.style.fontSize = '14px';
+                  btn.style.background = 'var(--primary-color, #3390ec)';
+                  btn.style.color = '#fff';
+                  btn.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    send('${BridgeCommandTypes.OPEN_SESSION_TOOLS}', { mode: mode });
+                  }, { passive: false });
+                  return btn;
+                };
+
+                wrap.appendChild(makeButton('Войти через Session', '${SessionToolsActivity.ACTION_IMPORT_SESSION}'));
+                wrap.appendChild(makeButton('Войти через tdata', '${SessionToolsActivity.ACTION_IMPORT_TDATA}'));
+
+                target.appendChild(wrap);
+              };
+
               var isInteractiveElement = function(el) {
                 if (!el || !el.closest) { return false; }
                 return !!el.closest('a,button,input,textarea,select,label,[role=\"button\"],[contenteditable=\"true\"]');
@@ -1018,11 +1093,13 @@ class MainActivity : ComponentActivity() {
               syncSystemBars();
               ensureModSettingsEntry();
               ensureDownloadsButton();
+              ensureAuthImportButtons();
 
               setInterval(removeSwitchLinks, 1800);
               setInterval(syncSystemBars, 2000);
               setInterval(ensureModSettingsEntry, 1200);
               setInterval(ensureDownloadsButton, 1500);
+              setInterval(ensureAuthImportButtons, 1200);
             })();
         """.trimIndent()
 

@@ -26,6 +26,11 @@
             android:summary="@string/mod_proxy_summary" />
 
         <Preference
+            android:key="mod_session_tools"
+            android:title="@string/mod_session_tools_title"
+            android:summary="@string/mod_session_tools_summary" />
+
+        <Preference
             android:key="mod_downloads_manager"
             android:title="@string/mod_downloads_title"
             android:summary="@string/mod_downloads_summary" />
