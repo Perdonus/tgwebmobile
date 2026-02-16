@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <PreferenceCategory android:title="@string/mod_category_runtime">
+        <SeekBarPreference
+            android:key="mod_interface_scale"
+            android:title="@string/mod_scale_title"
+            android:defaultValue="100" />
+
+        <SwitchPreferenceCompat
+            android:key="mod_keep_alive"
+            android:title="@string/mod_keep_alive_title"
+            android:summary="@string/mod_keep_alive_summary"
+            android:defaultValue="true" />
+
+        <Preference
+            android:key="mod_push_permission"
+            android:title="@string/mod_push_permission_title"
+            android:summary="@string/mod_push_permission_missing" />
+    </PreferenceCategory>
+
+    <PreferenceCategory android:title="@string/mod_category_network">
+        <Preference
+            android:key="mod_proxy_settings"
+            android:title="@string/mod_proxy_title"
+            android:summary="@string/mod_proxy_summary" />
+    </PreferenceCategory>
+
+    <PreferenceCategory android:title="@string/mod_category_web">
+        <SwitchPreferenceCompat
+            android:key="mod_use_bundled_web"
+            android:title="@string/mod_bundled_web_title"
+            android:summary="@string/mod_bundled_web_summary"
+            android:defaultValue="true" />
+    </PreferenceCategory>
+
+    <PreferenceCategory android:title="@string/mod_category_about">
+        <Preference
+            android:key="mod_version"
+            android:title="@string/mod_version_title"
+            android:selectable="false" />
+    </PreferenceCategory>
+
+</PreferenceScreen>

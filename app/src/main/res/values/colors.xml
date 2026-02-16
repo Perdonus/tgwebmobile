@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="tgweb_background">#F2F5FA</color>
+    <color name="tgweb_primary">#3390EC</color>
+    <color name="tgweb_primary_dark">#2376C5</color>
+    <color name="ic_launcher_background">#102233</color>
 </resources>

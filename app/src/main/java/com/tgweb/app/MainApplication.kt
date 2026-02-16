@@ -180,6 +180,7 @@ class MainApplication : Application() {
         val type = when (payload["type"]?.uppercase()) {
             ProxyType.HTTP.name -> ProxyType.HTTP
             ProxyType.SOCKS5.name -> ProxyType.SOCKS5
+            "SOCKS" -> ProxyType.SOCKS5
             ProxyType.MTPROTO.name -> ProxyType.MTPROTO
             else -> null
         } ?: return null
@@ -187,6 +188,8 @@ class MainApplication : Application() {
         val host = payload["host"].orEmpty().trim()
         val port = payload["port"]?.toIntOrNull() ?: 0
         if (host.isBlank() || port !in 1..65535) return null
+        val secret = payload["secret"]?.takeIf { it.isNotBlank() }
+        if (type == ProxyType.MTPROTO && secret.isNullOrBlank()) return null
 
         return ProxyConfigSnapshot(
             enabled = true,
@@ -195,7 +198,7 @@ class MainApplication : Application() {
             port = port,
             username = payload["username"]?.takeIf { it.isNotBlank() },
             password = payload["password"]?.takeIf { it.isNotBlank() },
-            secret = payload["secret"]?.takeIf { it.isNotBlank() },
+            secret = secret,
         )
     }
 

@@ -67,6 +67,7 @@ object BridgeCommandTypes {
     const val PIN_MEDIA = "PIN_MEDIA"
     const val GET_OFFLINE_STATUS = "GET_OFFLINE_STATUS"
     const val REQUEST_PUSH_PERMISSION = "REQUEST_PUSH_PERMISSION"
+    const val OPEN_MOD_SETTINGS = "OPEN_MOD_SETTINGS"
     const val SET_PROXY = "SET_PROXY"
     const val GET_PROXY_STATUS = "GET_PROXY_STATUS"
     const val SET_SYSTEM_UI_STYLE = "SET_SYSTEM_UI_STYLE"

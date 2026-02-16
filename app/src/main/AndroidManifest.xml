@@ -12,7 +12,9 @@
     <application
         android:name=".MainApplication"
         android:allowBackup="true"
-        android:label="TGWeb"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.TGWeb">
         <activity
@@ -22,7 +24,40 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+
+                <data android:scheme="tg" android:host="proxy" />
+                <data android:scheme="tg" android:host="socks" />
+                <data android:scheme="tg" android:host="http" />
+                <data android:scheme="tg" android:host="https" />
+                <data android:scheme="socks" />
+                <data android:scheme="socks5" />
+                <data android:scheme="mtproto" />
+                <data android:scheme="https" android:host="t.me" android:pathPrefix="/proxy" />
+                <data android:scheme="https" android:host="t.me" android:pathPrefix="/socks" />
+                <data android:scheme="https" android:host="telegram.me" android:pathPrefix="/proxy" />
+                <data android:scheme="https" android:host="telegram.me" android:pathPrefix="/socks" />
+                <data android:scheme="http" android:host="t.me" android:pathPrefix="/proxy" />
+                <data android:scheme="http" android:host="t.me" android:pathPrefix="/socks" />
+                <data android:scheme="http" android:host="telegram.me" android:pathPrefix="/proxy" />
+                <data android:scheme="http" android:host="telegram.me" android:pathPrefix="/socks" />
+            </intent-filter>
         </activity>
+
+        <activity
+            android:name=".ModSettingsActivity"
+            android:exported="false"
+            android:label="@string/mod_settings_title"
+            android:theme="@style/Theme.TGWeb.Settings" />
+
+        <activity
+            android:name=".ProxySettingsActivity"
+            android:exported="false"
+            android:label="@string/proxy_settings_title"
+            android:theme="@style/Theme.TGWeb.Settings" />
 
         <service
             android:name=".KeepAliveService"

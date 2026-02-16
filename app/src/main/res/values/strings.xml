@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">TGWeb</string>
+
+    <string name="mod_settings_title">Настройки мода</string>
+    <string name="mod_category_runtime">Интерфейс и фон</string>
+    <string name="mod_category_network">Сеть</string>
+    <string name="mod_category_web">WebView</string>
+    <string name="mod_category_about">О приложении</string>
+
+    <string name="mod_scale_title">Масштаб интерфейса</string>
+    <string name="mod_scale_summary">Текущее значение: %1$d%%</string>
+    <string name="mod_keep_alive_title">Keep alive</string>
+    <string name="mod_keep_alive_summary">Фоновый сервис для стабильного восстановления и пушей</string>
+    <string name="mod_push_permission_title">Разрешение на уведомления</string>
+    <string name="mod_push_permission_granted">Разрешено</string>
+    <string name="mod_push_permission_missing">Не выдано</string>
+
+    <string name="mod_proxy_title">Прокси</string>
+    <string name="mod_proxy_summary">HTTP, SOCKS5, MTProto, импорт tg:// и t.me ссылок</string>
+    <string name="mod_bundled_web_title">Использовать bundled Telegram Web</string>
+    <string name="mod_bundled_web_summary">Если отключено, загружается web.telegram.org/k/</string>
+    <string name="mod_version_title">Версия</string>
+
+    <string name="proxy_settings_title">Прокси</string>
+    <string name="proxy_enabled">Использовать прокси</string>
+    <string name="proxy_type">Тип прокси</string>
+    <string name="proxy_host">Хост</string>
+    <string name="proxy_port">Порт</string>
+    <string name="proxy_username">Логин</string>
+    <string name="proxy_password">Пароль</string>
+    <string name="proxy_secret">MTProto secret</string>
+    <string name="proxy_link_import_title">Импорт по ссылке</string>
+    <string name="proxy_link_import_hint">tg://proxy?... / https://t.me/proxy?... / socks5://user:pass@host:port / http://user:pass@host:port</string>
+    <string name="proxy_import_button">Импортировать ссылку</string>
+    <string name="proxy_apply_button">Применить</string>
+    <string name="proxy_disable_button">Выключить</string>
+    <string name="proxy_import_empty">Вставь ссылку прокси</string>
+    <string name="proxy_import_invalid">Не удалось распарсить ссылку прокси</string>
+    <string name="proxy_import_applied">Параметры прокси импортированы</string>
+    <string name="proxy_saved">Прокси сохранён</string>
+    <string name="proxy_invalid_host_port">Проверь host/port (1..65535)</string>
+    <string name="proxy_secret_required">Для MTProto обязателен secret</string>
+</resources>

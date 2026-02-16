@@ -30,6 +30,7 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
@@ -51,6 +52,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.ByteArrayInputStream
+import java.io.File
 
 class MainActivity : ComponentActivity() {
     private lateinit var rootLayout: FrameLayout
@@ -61,6 +64,8 @@ class MainActivity : ComponentActivity() {
     private var pendingFileChooser: ValueCallback<Array<Uri>>? = null
     private var loadingJob: Job? = null
     private var startedAtElapsedMs: Long = 0L
+    private val offlineCacheFile by lazy { File(cacheDir, OFFLINE_CACHE_FILE_NAME) }
+    private val offlineArchiveFile by lazy { File(cacheDir, OFFLINE_ARCHIVE_FILE_NAME) }
 
     private val runtimePrefs by lazy {
         getSharedPreferences(KeepAliveService.PREFS, Context.MODE_PRIVATE)
@@ -126,6 +131,16 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleLaunchIntent(intent)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        applyInterfaceScale(currentScalePercent().toString())
+        lifecycleScope.launch {
+            applyProxyToWebView(AppRepositories.getProxyState())
+            AppRepositories.postProxyState()
+            AppRepositories.postKeepAliveState(KeepAliveService.isEnabled(this@MainActivity))
+        }
     }
 
     override fun onDestroy() {
@@ -248,6 +263,7 @@ class MainActivity : ComponentActivity() {
             }
 
             override fun onPageFinished(view: WebView?, url: String?) {
+                cacheCurrentMainFrameHtml(url)
                 injectBootstrap()
                 injectMobileEnhancements()
                 applyProxyToWebView(AppRepositories.getProxyState())
@@ -260,6 +276,10 @@ class MainActivity : ComponentActivity() {
                     handleAuthHandoff(uri)
                     return true
                 }
+                if (ProxyLinkParser.parse(uri) != null) {
+                    handleIncomingProxyUri(uri, showFeedback = true)
+                    return true
+                }
                 return false
             }
 
@@ -268,7 +288,7 @@ class MainActivity : ComponentActivity() {
                 if (!request.isForMainFrame) return super.shouldInterceptRequest(view, request)
 
                 if (!isNetworkAvailable() && (url.scheme == "http" || url.scheme == "https")) {
-                    return WebResourceResponse("text/html", "UTF-8", assets.open("webapp/offline.html"))
+                    return buildOfflineResponseFromCache()
                 }
                 return super.shouldInterceptRequest(view, request)
             }
@@ -295,6 +315,7 @@ class MainActivity : ComponentActivity() {
             AndroidBridgeJsApi { command ->
                 when (command.type) {
                     BridgeCommandTypes.REQUEST_PUSH_PERMISSION -> requestNotificationPermission()
+                    BridgeCommandTypes.OPEN_MOD_SETTINGS -> openModSettings()
                     BridgeCommandTypes.SET_PROXY -> handleProxyCommand(command)
                     BridgeCommandTypes.GET_PROXY_STATUS -> AppRepositories.postProxyState()
                     BridgeCommandTypes.SET_SYSTEM_UI_STYLE -> applySystemUiStyle(command.payload)
@@ -336,7 +357,11 @@ class MainActivity : ComponentActivity() {
             return
         }
         if (!isNetworkAvailable()) {
-            webView.loadUrl(OFFLINE_URL)
+            if (offlineArchiveFile.exists()) {
+                webView.loadUrl("file://${offlineArchiveFile.absolutePath}")
+                return
+            }
+            webView.loadUrl(REMOTE_WEBK_URL)
             return
         }
         webView.loadUrl(REMOTE_WEBK_URL)
@@ -405,12 +430,88 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleLaunchIntent(intent: Intent?) {
+        val dataUri = intent?.data
+        if (dataUri != null && handleIncomingProxyUri(dataUri, showFeedback = true)) {
+            return
+        }
+
         val chatId = intent?.getLongExtra("chat_id", 0L) ?: 0L
         val messageId = intent?.getLongExtra("message_id", 0L) ?: 0L
         val preview = intent?.getStringExtra("preview").orEmpty()
         if (chatId > 0L) {
             AppRepositories.postPushMessageReceived(chatId = chatId, messageId = messageId, preview = preview)
         }
+    }
+
+    private fun handleIncomingProxyUri(uri: Uri, showFeedback: Boolean): Boolean {
+        val parsed = ProxyLinkParser.parse(uri) ?: return false
+        lifecycleScope.launch {
+            AppRepositories.updateProxyState(parsed)
+            applyProxyToWebView(parsed)
+            if (showFeedback) {
+                val typeTitle = when (parsed.type) {
+                    ProxyType.HTTP -> "HTTP"
+                    ProxyType.SOCKS5 -> "SOCKS5"
+                    ProxyType.MTPROTO -> "MTProto"
+                    ProxyType.DIRECT -> "DIRECT"
+                }
+                Toast.makeText(
+                    this@MainActivity,
+                    "Proxy applied: $typeTitle ${parsed.host}:${parsed.port}",
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
+        }
+        return true
+    }
+
+    private fun openModSettings() {
+        startActivity(Intent(this, ModSettingsActivity::class.java))
+    }
+
+    private fun cacheCurrentMainFrameHtml(url: String?) {
+        val currentUrl = url.orEmpty()
+        if (!currentUrl.startsWith("http")) return
+        if (!isNetworkAvailable()) return
+
+        runCatching {
+            offlineArchiveFile.parentFile?.mkdirs()
+            webView.saveWebArchive(offlineArchiveFile.absolutePath, false) { savedPath ->
+                if (savedPath.isNullOrBlank()) {
+                    Log.w(TAG, "Web archive path is empty")
+                }
+            }
+        }.onFailure {
+            Log.w(TAG, "Unable to save web archive", it)
+        }
+
+        webView.evaluateJavascript(
+            "(function(){return document.documentElement.outerHTML || '';})();",
+        ) { raw ->
+            val html = decodeEvaluateJavascriptResult(raw) ?: return@evaluateJavascript
+            if (html.length < 2048) return@evaluateJavascript
+            runCatching {
+                offlineCacheFile.parentFile?.mkdirs()
+                offlineCacheFile.writeText(html)
+            }.onFailure {
+                Log.w(TAG, "Unable to cache offline HTML", it)
+            }
+        }
+    }
+
+    private fun decodeEvaluateJavascriptResult(raw: String?): String? {
+        if (raw.isNullOrBlank() || raw == "null") return null
+        return runCatching { JSONArray("[$raw]").getString(0) }.getOrNull()
+    }
+
+    private fun buildOfflineResponseFromCache(): WebResourceResponse? {
+        if (!offlineCacheFile.exists()) return null
+        val bytes = runCatching { offlineCacheFile.readBytes() }.getOrNull() ?: return null
+        return WebResourceResponse(
+            "text/html",
+            "UTF-8",
+            ByteArrayInputStream(bytes),
+        )
     }
 
     private fun handleAuthHandoff(uri: Uri) {
@@ -574,7 +675,6 @@ class MainActivity : ComponentActivity() {
 
     private fun injectMobileEnhancements() {
         val scale = currentScalePercent()
-        val keepAliveEnabled = KeepAliveService.isEnabled(this)
         val script = """
             (function() {
               if (window.__tgwebMobileEnhancerInstalled) { return; }
@@ -588,31 +688,14 @@ class MainActivity : ComponentActivity() {
                 } catch (e) {}
               };
 
-              var lastTapTs = 0;
-              var lastTapX = 0;
-              var lastTapY = 0;
-              var lastTapBubble = null;
-
-              var isInteractiveElement = function(el) {
-                if (!el || !el.closest) { return false; }
-                return !!el.closest('a,button,input,textarea,select,label,[role="button"],[contenteditable="true"]');
-              };
-
-              var findBubbleForReaction = function(node) {
-                var el = node;
-                if (el && el.nodeType !== 1) {
-                  el = el.parentElement;
-                }
-                if (!el || !el.closest) { return null; }
-                return el.closest('.bubble,[data-mid]');
-              };
-
               var clamp = function(v, min, max) { return Math.max(min, Math.min(max, v)); };
               var applyScale = function(value) {
                 var p = clamp(Number(value) || 100, 75, 140);
-                var scale = p / 100;
-                document.documentElement.style.setProperty('--tgweb-mobile-scale', String(scale));
-                if (document.body) { document.body.style.zoom = String(scale); }
+                var zoom = p / 100;
+                document.documentElement.style.setProperty('--tgweb-mobile-scale', String(zoom));
+                if (document.body) {
+                  document.body.style.zoom = String(zoom);
+                }
                 return p;
               };
 
@@ -645,422 +728,35 @@ class MainActivity : ComponentActivity() {
                 });
               };
 
-              var switchRegex = /(switch\s+to\s+[ak]\s+version|version\s*[ak]|versio?n\s*[ak]|versao\s*[ak])/i;
+              var switchRegexes = [
+                /switch\s+to\s+a\s+version/i,
+                /switch\s+to\s+version\s+a/i,
+                /переключиться\s+на\s+версию\s*a/i,
+                /cambiar.*versi[oó]n\s*a/i,
+                /changer.*version\s*a/i
+              ];
+              var hasSwitchText = function(text) {
+                var value = String(text || '').trim();
+                if (!value || value.length > 128) { return false; }
+                for (var i = 0; i < switchRegexes.length; i++) {
+                  if (switchRegexes[i].test(value)) { return true; }
+                }
+                return false;
+              };
+              var hideNode = function(el) {
+                if (!el || !el.style) { return; }
+                el.style.display = 'none';
+                el.style.visibility = 'hidden';
+              };
               var removeSwitchLinks = function() {
-                document.querySelectorAll('a,button,span,div').forEach(function(el) {
-                  var text = (el.textContent || '').trim();
-                  if (!text || text.length > 96) { return; }
-                  if (switchRegex.test(text)) {
-                    el.style.display = 'none';
-                    el.style.visibility = 'hidden';
+                document.querySelectorAll('a[href*="web.telegram.org/a"],a[href*="/a/"],a[href*="/a?"]').forEach(function(node) {
+                  hideNode(node.closest('.row,li,div') || node);
+                });
+                document.querySelectorAll('a,button,span,div').forEach(function(node) {
+                  if (hasSwitchText(node.textContent || '')) {
+                    hideNode(node.closest('.row,li,div') || node);
                   }
                 });
-              };
-
-              var modState = {
-                scalePercent: applyScale(${scale}),
-                keepAliveEnabled: ${if (keepAliveEnabled) "true" else "false"},
-                pushGranted: null,
-                proxy: {
-                  enabled: false,
-                  type: 'DIRECT',
-                  host: '',
-                  port: '',
-                  username: '',
-                  password: '',
-                  secret: ''
-                }
-              };
-
-              var modUi = {
-                overlay: null,
-                scaleInput: null,
-                scaleValue: null,
-                keepAliveInput: null,
-                pushState: null,
-                proxyEnabledInput: null,
-                proxyTypeInput: null,
-                proxyHostInput: null,
-                proxyPortInput: null,
-                proxyUsernameInput: null,
-                proxyPasswordInput: null,
-                proxySecretInput: null,
-                proxyHostWrap: null,
-                proxyCredsWrap: null,
-                proxySecretWrap: null
-              };
-
-              var normalizeProxyType = function(rawType) {
-                var type = String(rawType || '').trim().toUpperCase();
-                if (type === 'HTTP' || type === 'SOCKS5' || type === 'MTPROTO') {
-                  return type;
-                }
-                return 'DIRECT';
-              };
-
-              var ensureModStyles = function() {
-                if (document.getElementById('tgweb-mod-settings-style')) { return; }
-                var style = document.createElement('style');
-                style.id = 'tgweb-mod-settings-style';
-                style.textContent =
-                  '.tgweb-mod-overlay{position:fixed;inset:0;display:none;align-items:center;justify-content:center;padding:16px;background:rgba(7,10,14,.62);z-index:2147483646}' +
-                  '.tgweb-mod-overlay.is-open{display:flex}' +
-                  '.tgweb-mod-card{width:min(560px,100%);max-height:92vh;overflow:auto;border-radius:14px;border:1px solid rgba(148,170,196,.28);background:var(--surface-color,#17212b);color:var(--primary-text-color,#f4f8ff);box-shadow:0 28px 56px rgba(0,0,0,.44);padding:14px}' +
-                  '.tgweb-mod-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;font-size:17px;font-weight:700}' +
-                  '.tgweb-mod-close{border:0;background:transparent;color:inherit;font-size:24px;line-height:1;cursor:pointer;padding:0 6px}' +
-                  '.tgweb-mod-block{border:1px solid rgba(128,150,176,.24);border-radius:12px;padding:10px;margin-top:10px;background:rgba(20,33,48,.34)}' +
-                  '.tgweb-mod-label{display:block;font-size:13px;font-weight:600;margin-bottom:6px}' +
-                  '.tgweb-mod-input,.tgweb-mod-select{width:100%;box-sizing:border-box;border:1px solid rgba(128,150,176,.35);border-radius:10px;background:rgba(12,24,36,.55);color:inherit;padding:9px 10px;font-size:14px}' +
-                  '.tgweb-mod-range{width:100%}' +
-                  '.tgweb-mod-row{display:flex;align-items:center;gap:10px}' +
-                  '.tgweb-mod-row-between{display:flex;align-items:center;justify-content:space-between;gap:10px}' +
-                  '.tgweb-mod-switch{display:flex;align-items:center;gap:8px;font-size:14px}' +
-                  '.tgweb-mod-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}' +
-                  '.tgweb-mod-btn{border:0;border-radius:10px;padding:9px 12px;font-size:13px;cursor:pointer}' +
-                  '.tgweb-mod-btn-primary{background:#3390ec;color:#fff}' +
-                  '.tgweb-mod-btn-secondary{background:rgba(76,96,120,.3);color:inherit}' +
-                  '.tgweb-mod-info{font-size:12px;opacity:.88;margin-top:6px;line-height:1.35}' +
-                  '.tgweb-mod-settings-row{cursor:pointer}' +
-                  '.tgweb-mod-hidden{display:none!important}';
-                document.head.appendChild(style);
-              };
-
-              var setVisibility = function(element, visible) {
-                if (!element) { return; }
-                element.classList.toggle('tgweb-mod-hidden', !visible);
-              };
-
-              var updateProxyFieldVisibility = function() {
-                if (!modUi.proxyEnabledInput || !modUi.proxyTypeInput) { return; }
-                var enabled = !!modUi.proxyEnabledInput.checked;
-                var type = normalizeProxyType(modUi.proxyTypeInput.value);
-                var needsHost = enabled && type !== 'DIRECT';
-                var creds = needsHost && (type === 'HTTP' || type === 'SOCKS5');
-                var secret = needsHost && type === 'MTPROTO';
-                setVisibility(modUi.proxyHostWrap, needsHost);
-                setVisibility(modUi.proxyCredsWrap, creds);
-                setVisibility(modUi.proxySecretWrap, secret);
-              };
-
-              var renderPushState = function() {
-                if (!modUi.pushState) { return; }
-                if (modState.pushGranted === true) {
-                  modUi.pushState.textContent = 'Push: разрешено';
-                } else if (modState.pushGranted === false) {
-                  modUi.pushState.textContent = 'Push: не разрешено';
-                } else {
-                  modUi.pushState.textContent = 'Push: статус неизвестен';
-                }
-              };
-
-              var syncModalFromState = function() {
-                if (!modUi.overlay) { return; }
-                if (modUi.scaleInput) {
-                  var scalePercent = clamp(Number(modState.scalePercent) || 100, 75, 140);
-                  modUi.scaleInput.value = String(scalePercent);
-                  if (modUi.scaleValue) {
-                    modUi.scaleValue.textContent = 'Масштаб: ' + scalePercent + '%';
-                  }
-                }
-                if (modUi.keepAliveInput) {
-                  modUi.keepAliveInput.checked = !!modState.keepAliveEnabled;
-                }
-                if (modUi.proxyEnabledInput) {
-                  modUi.proxyEnabledInput.checked = !!modState.proxy.enabled;
-                }
-                if (modUi.proxyTypeInput) {
-                  modUi.proxyTypeInput.value = normalizeProxyType(modState.proxy.type);
-                }
-                if (modUi.proxyHostInput) {
-                  modUi.proxyHostInput.value = modState.proxy.host || '';
-                }
-                if (modUi.proxyPortInput) {
-                  modUi.proxyPortInput.value = modState.proxy.port || '';
-                }
-                if (modUi.proxyUsernameInput) {
-                  modUi.proxyUsernameInput.value = modState.proxy.username || '';
-                }
-                if (modUi.proxyPasswordInput) {
-                  modUi.proxyPasswordInput.value = modState.proxy.password || '';
-                }
-                if (modUi.proxySecretInput) {
-                  modUi.proxySecretInput.value = modState.proxy.secret || '';
-                }
-                updateProxyFieldVisibility();
-                renderPushState();
-              };
-
-              var closeModSettings = function() {
-                if (!modUi.overlay) { return; }
-                modUi.overlay.classList.remove('is-open');
-              };
-
-              var buildField = function(labelText, input) {
-                var wrap = document.createElement('div');
-                wrap.style.marginTop = '8px';
-                var label = document.createElement('label');
-                label.className = 'tgweb-mod-label';
-                label.textContent = labelText;
-                wrap.appendChild(label);
-                wrap.appendChild(input);
-                return wrap;
-              };
-
-              var saveModSettings = function() {
-                if (!modUi.overlay) { return; }
-                var scalePercent = clamp(Number(modUi.scaleInput && modUi.scaleInput.value) || 100, 75, 140);
-                modState.scalePercent = applyScale(scalePercent);
-                send('${BridgeCommandTypes.SET_INTERFACE_SCALE}', { scalePercent: String(modState.scalePercent) });
-
-                modState.keepAliveEnabled = !!(modUi.keepAliveInput && modUi.keepAliveInput.checked);
-                send('${BridgeCommandTypes.SET_KEEP_ALIVE}', { enabled: String(modState.keepAliveEnabled) });
-
-                var proxyEnabled = !!(modUi.proxyEnabledInput && modUi.proxyEnabledInput.checked);
-                var proxyType = normalizeProxyType(modUi.proxyTypeInput && modUi.proxyTypeInput.value);
-                if (!proxyEnabled || proxyType === 'DIRECT') {
-                  modState.proxy = {
-                    enabled: false,
-                    type: 'DIRECT',
-                    host: '',
-                    port: '',
-                    username: '',
-                    password: '',
-                    secret: ''
-                  };
-                  send('${BridgeCommandTypes.SET_PROXY}', { enabled: 'false' });
-                  closeModSettings();
-                  return;
-                }
-
-                var host = String(modUi.proxyHostInput && modUi.proxyHostInput.value || '').trim();
-                var port = parseInt(String(modUi.proxyPortInput && modUi.proxyPortInput.value || '').trim(), 10);
-                if (!host || !Number.isFinite(port) || port < 1 || port > 65535) {
-                  alert('Проверь прокси: host и port (1..65535) обязательны.');
-                  return;
-                }
-
-                var payload = {
-                  enabled: 'true',
-                  type: proxyType,
-                  host: host,
-                  port: String(port)
-                };
-
-                var username = String(modUi.proxyUsernameInput && modUi.proxyUsernameInput.value || '').trim();
-                var password = String(modUi.proxyPasswordInput && modUi.proxyPasswordInput.value || '').trim();
-                var secret = String(modUi.proxySecretInput && modUi.proxySecretInput.value || '').trim();
-
-                if (proxyType === 'MTPROTO') {
-                  payload.secret = secret;
-                } else {
-                  payload.username = username;
-                  payload.password = password;
-                }
-
-                modState.proxy = {
-                  enabled: true,
-                  type: proxyType,
-                  host: host,
-                  port: String(port),
-                  username: username,
-                  password: password,
-                  secret: secret
-                };
-
-                send('${BridgeCommandTypes.SET_PROXY}', payload);
-                closeModSettings();
-              };
-
-              var ensureModModal = function() {
-                if (modUi.overlay) { return; }
-                ensureModStyles();
-
-                var overlay = document.createElement('div');
-                overlay.className = 'tgweb-mod-overlay';
-
-                var card = document.createElement('div');
-                card.className = 'tgweb-mod-card';
-
-                var header = document.createElement('div');
-                header.className = 'tgweb-mod-header';
-                var title = document.createElement('div');
-                title.textContent = 'Настройки мода';
-                var closeBtn = document.createElement('button');
-                closeBtn.className = 'tgweb-mod-close';
-                closeBtn.type = 'button';
-                closeBtn.textContent = '×';
-                closeBtn.onclick = closeModSettings;
-                header.append(title, closeBtn);
-
-                var scaleBlock = document.createElement('div');
-                scaleBlock.className = 'tgweb-mod-block';
-                var scaleTop = document.createElement('div');
-                scaleTop.className = 'tgweb-mod-row-between';
-                var scaleTitle = document.createElement('div');
-                scaleTitle.textContent = 'Интерфейс';
-                scaleTitle.style.fontWeight = '700';
-                var scaleValue = document.createElement('div');
-                scaleValue.className = 'tgweb-mod-info';
-                scaleTop.append(scaleTitle, scaleValue);
-                var scaleInput = document.createElement('input');
-                scaleInput.type = 'range';
-                scaleInput.min = '75';
-                scaleInput.max = '140';
-                scaleInput.className = 'tgweb-mod-range';
-                scaleInput.oninput = function() {
-                  var p = clamp(Number(scaleInput.value) || 100, 75, 140);
-                  scaleValue.textContent = 'Масштаб: ' + p + '%';
-                  applyScale(p);
-                };
-                scaleBlock.append(scaleTop, scaleInput);
-
-                var keepAliveBlock = document.createElement('div');
-                keepAliveBlock.className = 'tgweb-mod-block';
-                var keepAliveSwitch = document.createElement('label');
-                keepAliveSwitch.className = 'tgweb-mod-switch';
-                var keepAliveInput = document.createElement('input');
-                keepAliveInput.type = 'checkbox';
-                keepAliveSwitch.append(keepAliveInput, document.createTextNode('Keep alive (фон удерживается)'));
-                keepAliveBlock.append(keepAliveSwitch);
-                var pushRow = document.createElement('div');
-                pushRow.className = 'tgweb-mod-row';
-                pushRow.style.marginTop = '10px';
-                var pushBtn = document.createElement('button');
-                pushBtn.className = 'tgweb-mod-btn tgweb-mod-btn-secondary';
-                pushBtn.type = 'button';
-                pushBtn.textContent = 'Разрешение Push';
-                pushBtn.onclick = function() {
-                  send('${BridgeCommandTypes.REQUEST_PUSH_PERMISSION}', {});
-                };
-                var pushState = document.createElement('div');
-                pushState.className = 'tgweb-mod-info';
-                pushRow.append(pushBtn, pushState);
-                keepAliveBlock.appendChild(pushRow);
-
-                var proxyBlock = document.createElement('div');
-                proxyBlock.className = 'tgweb-mod-block';
-                var proxyHeader = document.createElement('div');
-                proxyHeader.className = 'tgweb-mod-row-between';
-                var proxyTitle = document.createElement('div');
-                proxyTitle.textContent = 'Прокси';
-                proxyTitle.style.fontWeight = '700';
-                var proxyEnabledLabel = document.createElement('label');
-                proxyEnabledLabel.className = 'tgweb-mod-switch';
-                var proxyEnabledInput = document.createElement('input');
-                proxyEnabledInput.type = 'checkbox';
-                proxyEnabledLabel.append(proxyEnabledInput, document.createTextNode('Включить'));
-                proxyHeader.append(proxyTitle, proxyEnabledLabel);
-
-                var proxyTypeInput = document.createElement('select');
-                proxyTypeInput.className = 'tgweb-mod-select';
-                ['DIRECT', 'HTTP', 'SOCKS5', 'MTPROTO'].forEach(function(type) {
-                  var option = document.createElement('option');
-                  option.value = type;
-                  option.textContent = type;
-                  proxyTypeInput.appendChild(option);
-                });
-                var proxyTypeWrap = buildField('Тип', proxyTypeInput);
-
-                var proxyHostInput = document.createElement('input');
-                proxyHostInput.type = 'text';
-                proxyHostInput.className = 'tgweb-mod-input';
-                proxyHostInput.placeholder = 'host';
-
-                var proxyPortInput = document.createElement('input');
-                proxyPortInput.type = 'number';
-                proxyPortInput.min = '1';
-                proxyPortInput.max = '65535';
-                proxyPortInput.className = 'tgweb-mod-input';
-                proxyPortInput.placeholder = 'port';
-
-                var proxyHostWrap = document.createElement('div');
-                proxyHostWrap.className = 'tgweb-mod-row';
-                proxyHostWrap.style.marginTop = '8px';
-                var hostGroup = buildField('Host', proxyHostInput);
-                hostGroup.style.flex = '2';
-                hostGroup.style.marginTop = '0';
-                var portGroup = buildField('Port', proxyPortInput);
-                portGroup.style.flex = '1';
-                portGroup.style.marginTop = '0';
-                proxyHostWrap.append(hostGroup, portGroup);
-
-                var proxyUsernameInput = document.createElement('input');
-                proxyUsernameInput.type = 'text';
-                proxyUsernameInput.className = 'tgweb-mod-input';
-                proxyUsernameInput.placeholder = 'username';
-                var proxyPasswordInput = document.createElement('input');
-                proxyPasswordInput.type = 'password';
-                proxyPasswordInput.className = 'tgweb-mod-input';
-                proxyPasswordInput.placeholder = 'password';
-                var proxyCredsWrap = document.createElement('div');
-                proxyCredsWrap.style.marginTop = '8px';
-                proxyCredsWrap.append(
-                  buildField('Логин', proxyUsernameInput),
-                  buildField('Пароль', proxyPasswordInput)
-                );
-
-                var proxySecretInput = document.createElement('input');
-                proxySecretInput.type = 'text';
-                proxySecretInput.className = 'tgweb-mod-input';
-                proxySecretInput.placeholder = 'mtproto secret';
-                var proxySecretWrap = buildField('MTProto secret', proxySecretInput);
-                proxySecretWrap.style.marginTop = '8px';
-
-                proxyBlock.append(proxyHeader, proxyTypeWrap, proxyHostWrap, proxyCredsWrap, proxySecretWrap);
-                var proxyHelp = document.createElement('div');
-                proxyHelp.className = 'tgweb-mod-info';
-                proxyHelp.textContent = 'Поддержка: HTTP, SOCKS5, MTProto.';
-                proxyBlock.appendChild(proxyHelp);
-
-                var actions = document.createElement('div');
-                actions.className = 'tgweb-mod-actions';
-                var cancelBtn = document.createElement('button');
-                cancelBtn.type = 'button';
-                cancelBtn.className = 'tgweb-mod-btn tgweb-mod-btn-secondary';
-                cancelBtn.textContent = 'Отмена';
-                cancelBtn.onclick = closeModSettings;
-                var saveBtn = document.createElement('button');
-                saveBtn.type = 'button';
-                saveBtn.className = 'tgweb-mod-btn tgweb-mod-btn-primary';
-                saveBtn.textContent = 'Сохранить';
-                saveBtn.onclick = saveModSettings;
-                actions.append(cancelBtn, saveBtn);
-
-                card.append(header, scaleBlock, keepAliveBlock, proxyBlock, actions);
-                overlay.appendChild(card);
-                overlay.addEventListener('click', function(e) {
-                  if (e.target === overlay) {
-                    closeModSettings();
-                  }
-                });
-
-                proxyEnabledInput.addEventListener('change', updateProxyFieldVisibility);
-                proxyTypeInput.addEventListener('change', updateProxyFieldVisibility);
-
-                document.documentElement.appendChild(overlay);
-
-                modUi.overlay = overlay;
-                modUi.scaleInput = scaleInput;
-                modUi.scaleValue = scaleValue;
-                modUi.keepAliveInput = keepAliveInput;
-                modUi.pushState = pushState;
-                modUi.proxyEnabledInput = proxyEnabledInput;
-                modUi.proxyTypeInput = proxyTypeInput;
-                modUi.proxyHostInput = proxyHostInput;
-                modUi.proxyPortInput = proxyPortInput;
-                modUi.proxyUsernameInput = proxyUsernameInput;
-                modUi.proxyPasswordInput = proxyPasswordInput;
-                modUi.proxySecretInput = proxySecretInput;
-                modUi.proxyHostWrap = proxyHostWrap;
-                modUi.proxyCredsWrap = proxyCredsWrap;
-                modUi.proxySecretWrap = proxySecretWrap;
-                syncModalFromState();
-              };
-
-              var openModSettings = function() {
-                ensureModModal();
-                syncModalFromState();
-                modUi.overlay.classList.add('is-open');
               };
 
               var ensureModSettingsEntry = function() {
@@ -1073,9 +769,11 @@ class MainActivity : ComponentActivity() {
 
                 var icon = document.createElement('span');
                 icon.className = 'tgico tgico-settings row-icon';
+
                 var title = document.createElement('div');
                 title.className = 'row-title';
                 title.textContent = 'Настройки мода';
+
                 var right = document.createElement('div');
                 right.className = 'row-title row-title-right row-title-right-secondary';
                 right.textContent = 'Android';
@@ -1084,111 +782,123 @@ class MainActivity : ComponentActivity() {
                 row.addEventListener('click', function(e) {
                   e.preventDefault();
                   e.stopPropagation();
-                  openModSettings();
-                }, {passive: false});
+                  send('${BridgeCommandTypes.OPEN_MOD_SETTINGS}', {});
+                }, { passive: false });
 
                 buttonsRoot.appendChild(row);
               };
 
-              var closeActiveChat = function() {
-                var btn = document.querySelector('.topbar .sidebar-close-button:not(.hide), .chat-info-container .sidebar-close-button:not(.hide), .sidebar-header .sidebar-close-button:not(.hide)');
+              var isInteractiveElement = function(el) {
+                if (!el || !el.closest) { return false; }
+                return !!el.closest('a,button,input,textarea,select,label,[role=\"button\"],[contenteditable=\"true\"]');
+              };
+
+              var findBubbleForReaction = function(node) {
+                var el = node;
+                if (el && el.nodeType !== 1) {
+                  el = el.parentElement;
+                }
+                if (!el || !el.closest) { return null; }
+                return el.closest('.bubble,[data-mid]');
+              };
+
+              var closeActiveChatIfPossible = function() {
+                var btn = document.querySelector(
+                  '.topbar .sidebar-close-button:not(.hide), ' +
+                  '.chat-info-container .sidebar-close-button:not(.hide), ' +
+                  '.sidebar-header .sidebar-close-button:not(.hide)'
+                );
                 if (btn && typeof btn.click === 'function') {
                   btn.click();
-                  return;
+                  return true;
                 }
-                var eventOpts = {
-                  key: 'Escape',
-                  code: 'Escape',
-                  keyCode: 27,
-                  which: 27,
-                  bubbles: true
-                };
-                document.dispatchEvent(new KeyboardEvent('keydown', eventOpts));
-                window.dispatchEvent(new KeyboardEvent('keydown', eventOpts));
-                setTimeout(function() {
-                  var leftShown = !!(document.body && document.body.classList.contains('is-left-column-shown'));
-                  if (!leftShown && window.history.length > 1) {
-                    history.back();
-                  }
-                }, 110);
+                return false;
               };
 
               var isMediaViewerOpen = function() {
-                return !!document.querySelector('.media-viewer-whole.active, .media-viewer-whole, .media-viewer, .media-viewer-movers, [class*="media-viewer"]');
+                return !!document.querySelector(
+                  '.media-viewer-whole, .media-viewer, .media-viewer-movers, ' +
+                  '[class*=\"media-viewer\"], [class*=\"MediaViewer\"], ' +
+                  '[class*=\"avatar-viewer\"], [class*=\"AvatarViewer\"]'
+                );
               };
 
               var swipeMedia = function(next) {
                 var key = next ? 'ArrowRight' : 'ArrowLeft';
                 var keyCode = next ? 39 : 37;
-                var keyboardEvent = new KeyboardEvent('keydown', {
+                var event = new KeyboardEvent('keydown', {
                   key: key,
                   code: key,
                   keyCode: keyCode,
                   which: keyCode,
                   bubbles: true
                 });
-                document.dispatchEvent(keyboardEvent);
-                window.dispatchEvent(keyboardEvent);
+                document.dispatchEvent(event);
+                window.dispatchEvent(event);
               };
 
-              window.addEventListener('tgweb-native', function(event) {
-                var detail = event && event.detail ? event.detail : null;
-                if (!detail || !detail.type) { return; }
-                var payload = detail.payload || {};
-                if (detail.type === 'PROXY_STATE') {
-                  var normalizedType = normalizeProxyType(payload.type);
-                  modState.proxy.enabled = String(payload.enabled).toLowerCase() === 'true';
-                  modState.proxy.type = normalizedType;
-                  modState.proxy.host = payload.host || '';
-                  modState.proxy.port = payload.port || '';
-                  modState.proxy.username = payload.username || '';
-                  modState.proxy.secret = payload.secret || '';
-                } else if (detail.type === 'KEEP_ALIVE_STATE') {
-                  modState.keepAliveEnabled = String(payload.enabled).toLowerCase() === 'true';
-                } else if (detail.type === 'INTERFACE_SCALE_STATE') {
-                  var scalePercent = clamp(Number(payload.scalePercent) || modState.scalePercent, 75, 140);
-                  modState.scalePercent = applyScale(scalePercent);
-                } else if (detail.type === 'PUSH_PERMISSION_STATE') {
-                  modState.pushGranted = String(payload.granted).toLowerCase() === 'true';
+              var findClickable = function(node) {
+                if (!node) { return null; }
+                if (node.matches && node.matches('button,[role=\"button\"]')) {
+                  return node;
                 }
+                return node.closest ? node.closest('button,[role=\"button\"]') : null;
+              };
 
-                if (modUi.overlay && modUi.overlay.classList.contains('is-open')) {
-                  syncModalFromState();
+              var openMainMenuFromSwipe = function() {
+                var selectors = [
+                  'button[aria-label*=\"More\"]',
+                  'button[aria-label*=\"Menu\"]',
+                  '.left-header .tgico-more',
+                  '.Topbar .tgico-more',
+                  '.left-header .tgico-menu',
+                  '.Topbar .tgico-menu',
+                  '.btn-menu'
+                ];
+                for (var i = 0; i < selectors.length; i++) {
+                  var node = document.querySelector(selectors[i]);
+                  var clickable = findClickable(node);
+                  if (clickable && typeof clickable.click === 'function') {
+                    clickable.click();
+                    return true;
+                  }
                 }
-                ensureModSettingsEntry();
-              });
+                return false;
+              };
 
-              var startX = 0, startY = 0, startTs = 0;
+              var lastTapTs = 0;
+              var lastTapX = 0;
+              var lastTapY = 0;
+              var lastTapBubble = null;
+              var touchStartX = 0;
+              var touchStartY = 0;
+              var touchStartTs = 0;
+
               document.addEventListener('touchstart', function(e) {
                 if (!e.touches || e.touches.length !== 1) { return; }
-                startX = e.touches[0].clientX;
-                startY = e.touches[0].clientY;
-                startTs = Date.now();
+                touchStartX = e.touches[0].clientX;
+                touchStartY = e.touches[0].clientY;
+                touchStartTs = Date.now();
               }, { passive: true });
 
               document.addEventListener('touchend', function(e) {
                 if (!e.changedTouches || e.changedTouches.length !== 1) { return; }
                 var touch = e.changedTouches[0];
                 var now = Date.now();
-                var tapDx = touch.clientX - startX;
-                var tapDy = touch.clientY - startY;
+                var tapDx = touch.clientX - touchStartX;
+                var tapDy = touch.clientY - touchStartY;
                 var tapDistance = Math.sqrt((tapDx * tapDx) + (tapDy * tapDy));
-                var tapDt = now - startTs;
+                var tapDt = now - touchStartTs;
                 var bubble = findBubbleForReaction(e.target);
 
                 if (tapDt < 350 && tapDistance < 16 && bubble && !isInteractiveElement(e.target)) {
-                  var sameBubble =
-                    !!lastTapBubble &&
+                  var sameBubble = !!lastTapBubble &&
                     (lastTapBubble === bubble || lastTapBubble.contains(bubble) || bubble.contains(lastTapBubble));
                   var isFast = (now - lastTapTs) <= 320;
                   var isNear = Math.abs(touch.clientX - lastTapX) <= 28 && Math.abs(touch.clientY - lastTapY) <= 28;
                   if (sameBubble && isFast && isNear) {
                     ['mousedown', 'mouseup', 'click', 'dblclick'].forEach(function(type) {
-                      bubble.dispatchEvent(new MouseEvent(type, {
-                        bubbles: true,
-                        cancelable: true,
-                        view: window
-                      }));
+                      bubble.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }));
                     });
                     lastTapTs = 0;
                     lastTapBubble = null;
@@ -1202,31 +912,42 @@ class MainActivity : ComponentActivity() {
                   lastTapBubble = null;
                 }
 
-                var dx = e.changedTouches[0].clientX - startX;
-                var dy = e.changedTouches[0].clientY - startY;
-                var dt = Date.now() - startTs;
+                var dx = touch.clientX - touchStartX;
+                var dy = touch.clientY - touchStartY;
+                var dt = Date.now() - touchStartTs;
                 if (dt > 900) { return; }
                 if (Math.abs(dx) < 56 || Math.abs(dx) < Math.abs(dy) * 1.1) { return; }
 
-                if (startX <= 28 && dx > 56) {
-                  closeActiveChat();
+                if (isMediaViewerOpen()) {
+                  swipeMedia(dx < 0);
                   return;
                 }
 
-                if (isMediaViewerOpen()) {
-                  swipeMedia(dx < 0);
+                if (touchStartX <= 28 && dx > 56) {
+                  if (closeActiveChatIfPossible()) {
+                    return;
+                  }
+                  openMainMenuFromSwipe();
                 }
               }, { passive: true });
 
+              window.addEventListener('tgweb-native', function(event) {
+                var detail = event && event.detail ? event.detail : null;
+                if (!detail || !detail.type) { return; }
+                if (detail.type === 'INTERFACE_SCALE_STATE') {
+                  var payload = detail.payload || {};
+                  applyScale(payload.scalePercent);
+                }
+              });
+
+              applyScale(${scale});
               removeSwitchLinks();
               syncSystemBars();
               ensureModSettingsEntry();
-              setInterval(removeSwitchLinks, 2200);
+
+              setInterval(removeSwitchLinks, 1800);
               setInterval(syncSystemBars, 2000);
               setInterval(ensureModSettingsEntry, 1200);
-
-              send('${BridgeCommandTypes.GET_PROXY_STATUS}', {});
-              send('${BridgeCommandTypes.GET_KEEP_ALIVE_STATE}', {});
             })();
         """.trimIndent()
 
@@ -1273,9 +994,11 @@ class MainActivity : ComponentActivity() {
         val enabled = payload["enabled"].orEmpty().equals("true", ignoreCase = true)
         if (!enabled) return ProxyConfigSnapshot(enabled = false, type = ProxyType.DIRECT)
 
-        val type = when (payload["type"]?.uppercase()) {
+        val typeRaw = payload["type"]?.uppercase().orEmpty()
+        val type = when (typeRaw) {
             ProxyType.HTTP.name -> ProxyType.HTTP
             ProxyType.SOCKS5.name -> ProxyType.SOCKS5
+            "SOCKS" -> ProxyType.SOCKS5
             ProxyType.MTPROTO.name -> ProxyType.MTPROTO
             else -> null
         } ?: return null
@@ -1283,6 +1006,8 @@ class MainActivity : ComponentActivity() {
         val host = payload["host"].orEmpty().trim()
         val port = payload["port"]?.toIntOrNull() ?: 0
         if (host.isBlank() || port !in 1..65535) return null
+        val secret = payload["secret"]?.takeIf { it.isNotBlank() }
+        if (type == ProxyType.MTPROTO && secret.isNullOrBlank()) return null
 
         return ProxyConfigSnapshot(
             enabled = true,
@@ -1291,7 +1016,7 @@ class MainActivity : ComponentActivity() {
             port = port,
             username = payload["username"]?.takeIf { it.isNotBlank() },
             password = payload["password"]?.takeIf { it.isNotBlank() },
-            secret = payload["secret"]?.takeIf { it.isNotBlank() },
+            secret = secret,
         )
     }
 
@@ -1302,7 +1027,7 @@ class MainActivity : ComponentActivity() {
         }
         val executor = ContextCompat.getMainExecutor(this)
 
-        if (!proxyState.enabled || proxyState.type == ProxyType.DIRECT || proxyState.type == ProxyType.MTPROTO) {
+        if (!proxyState.enabled || proxyState.type == ProxyType.DIRECT) {
             ProxyController.getInstance().clearProxyOverride(
                 executor,
                 { AppRepositories.postProxyState(proxyState) },
@@ -1310,8 +1035,15 @@ class MainActivity : ComponentActivity() {
             return
         }
 
-        val scheme = if (proxyState.type == ProxyType.SOCKS5) "socks" else "http"
-        val proxyRule = "$scheme://${proxyState.host}:${proxyState.port}"
+        val proxyRule = buildWebViewProxyRule(proxyState)
+        if (proxyRule == null) {
+            ProxyController.getInstance().clearProxyOverride(
+                executor,
+                { AppRepositories.postProxyState(proxyState) },
+            )
+            return
+        }
+
         val proxyConfig = ProxyConfig.Builder()
             .addProxyRule(proxyRule)
             .build()
@@ -1321,6 +1053,24 @@ class MainActivity : ComponentActivity() {
             executor,
             { AppRepositories.postProxyState(proxyState) },
         )
+    }
+
+    private fun buildWebViewProxyRule(proxyState: ProxyConfigSnapshot): String? {
+        val scheme = when (proxyState.type) {
+            ProxyType.HTTP -> "http"
+            ProxyType.SOCKS5 -> "socks"
+            ProxyType.MTPROTO -> "socks" // compatibility fallback for WebView transport
+            ProxyType.DIRECT -> return null
+        }
+
+        val username = proxyState.username.orEmpty()
+        val password = proxyState.password.orEmpty()
+        val credentials = if (username.isBlank() && password.isBlank()) {
+            ""
+        } else {
+            "${Uri.encode(username)}:${Uri.encode(password)}@"
+        }
+        return "$scheme://$credentials${proxyState.host}:${proxyState.port}"
     }
 
     private fun isNetworkAvailable(): Boolean {
@@ -1364,6 +1114,7 @@ class MainActivity : ComponentActivity() {
         private const val BUNDLED_WEBK_URL = "file:///android_asset/webapp/webk/index.html"
         private const val BUNDLED_WEBK_SRC_PUBLIC_URL = "file:///android_asset/webapp/webk-src/public/index.html"
         private const val REMOTE_WEBK_URL = "https://web.telegram.org/k/"
-        private const val OFFLINE_URL = "file:///android_asset/webapp/offline.html"
+        private const val OFFLINE_CACHE_FILE_NAME = "tgweb_offline_main.html"
+        private const val OFFLINE_ARCHIVE_FILE_NAME = "tgweb_offline_page.mht"
     }
 }
