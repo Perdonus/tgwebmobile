@@ -25,5 +25,11 @@
         android:layout_marginTop="10dp"
         android:text="@string/debug_open_notification_settings" />
 
-</LinearLayout>
+    <Button
+        android:id="@+id/debugOpenLogsButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:text="@string/debug_open_logs" />
 
+</LinearLayout>

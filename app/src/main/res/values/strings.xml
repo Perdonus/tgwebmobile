@@ -4,7 +4,9 @@
 
     <string name="mod_settings_title">Настройки FlyGram</string>
     <string name="mod_category_runtime">Интерфейс и фон</string>
+    <string name="mod_category_customization">Кастомизация</string>
     <string name="mod_category_network">Сеть</string>
+    <string name="mod_category_tools">Инструменты</string>
     <string name="mod_category_web">WebView</string>
     <string name="mod_category_about">О приложении</string>
 
@@ -26,6 +28,8 @@
     <string name="mod_downloads_summary">Локальный кеш и экспорт в Downloads/flygram_downloads</string>
     <string name="mod_bundled_web_title">Использовать bundled FlyGram Web</string>
     <string name="mod_bundled_web_summary">Если отключено, загружается web.telegram.org/k/</string>
+    <string name="mod_author_channel_title">Канал автора</string>
+    <string name="mod_author_channel_summary">@plugin_ai</string>
     <string name="mod_version_title">Версия</string>
 
     <string name="proxy_settings_title">Прокси</string>
@@ -100,4 +104,9 @@
     <string name="debug_tools_title">Debug tools</string>
     <string name="debug_test_notification">Тест уведомлений</string>
     <string name="debug_open_notification_settings">Открыть настройки уведомлений</string>
+    <string name="debug_open_logs">Логи сети и прокси</string>
+    <string name="debug_logs_title">FlyGram Debug Logs</string>
+    <string name="debug_copy_logs">Скопировать</string>
+    <string name="debug_clear_logs">Очистить</string>
+    <string name="debug_close_logs">Закрыть</string>
 </resources>

@@ -24,4 +24,11 @@ interface NotificationService {
     suspend fun registerDeviceToken(fcmToken: String)
     suspend fun handlePush(payload: Map<String, String>)
     fun showMessageNotification(event: MessageItem)
+    suspend fun sendServerTestPush(): PushDebugResult
 }
+
+data class PushDebugResult(
+    val success: Boolean,
+    val title: String,
+    val details: String,
+)

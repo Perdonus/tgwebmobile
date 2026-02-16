@@ -47,6 +47,7 @@ import androidx.webkit.ProxyConfig
 import androidx.webkit.ProxyController
 import androidx.webkit.WebViewFeature
 import com.tgweb.core.data.AppRepositories
+import com.tgweb.core.data.DebugLogStore
 import com.tgweb.core.webbridge.BridgeCommand
 import com.tgweb.core.webbridge.BridgeCommandTypes
 import com.tgweb.core.webbridge.BridgeEvent
@@ -81,6 +82,8 @@ class MainActivity : ComponentActivity() {
     private var attemptedOfflineFallback: Boolean = false
     private var lastProxySheetUrl: String = ""
     private var lastProxySheetTsMs: Long = 0L
+    private var webUiReadyForProxy: Boolean = false
+    private var pendingProxyForApply: ProxyConfigSnapshot? = null
 
     private val runtimePrefs by lazy {
         getSharedPreferences(KeepAliveService.PREFS, Context.MODE_PRIVATE)
@@ -161,8 +164,14 @@ class MainActivity : ComponentActivity() {
             WebSettings.LOAD_CACHE_ELSE_NETWORK
         }
         lifecycleScope.launch {
-            runCatching { applyProxyToWebView(AppRepositories.getProxyState()) }
-                .onFailure { Log.w(TAG, "Unable to apply proxy on resume", it) }
+            if (webUiReadyForProxy) {
+                val state = pendingProxyForApply ?: AppRepositories.getProxyState()
+                runCatching { applyProxyToWebView(state) }
+                    .onFailure { Log.w(TAG, "Unable to apply proxy on resume", it) }
+            } else {
+                pendingProxyForApply = AppRepositories.getProxyState()
+                DebugLogStore.log("PROXY", "Deferred proxy apply onResume until WebUI is fully loaded")
+            }
             AppRepositories.postProxyState()
             AppRepositories.postKeepAliveState(KeepAliveService.isEnabled(this@MainActivity))
         }
@@ -293,7 +302,9 @@ class MainActivity : ComponentActivity() {
             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                 startedAtElapsedMs = SystemClock.elapsedRealtime()
                 attemptedOfflineFallback = false
+                webUiReadyForProxy = false
                 AppRepositories.postNetworkState(isNetworkAvailable())
+                DebugLogStore.log("WEB", "Page started: ${url.orEmpty()}")
                 view?.settings?.cacheMode = if (isNetworkAvailable()) {
                     WebSettings.LOAD_DEFAULT
                 } else {
@@ -306,9 +317,32 @@ class MainActivity : ComponentActivity() {
                 cacheCurrentMainFrameHtml(url)
                 injectBootstrap()
                 injectMobileEnhancements()
-                runCatching { applyProxyToWebView(AppRepositories.getProxyState()) }
+                webUiReadyForProxy = true
+                val state = pendingProxyForApply ?: AppRepositories.getProxyState()
+                pendingProxyForApply = null
+                DebugLogStore.log("WEB", "Page finished: ${url.orEmpty()}")
+                runCatching { applyProxyToWebView(state) }
                     .onFailure { Log.w(TAG, "Unable to apply proxy on page finish", it) }
                 hideLoadingOverlayWithMinimumDuration()
+            }
+
+            override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): android.webkit.WebResourceResponse? {
+                request?.url?.toString()?.let { requestUrl ->
+                    if (requestUrl.startsWith("http://") || requestUrl.startsWith("https://")) {
+                        val proxy = AppRepositories.getProxyState()
+                        val hasAuth = !proxy.username.isNullOrBlank() || !proxy.password.isNullOrBlank()
+                        val proxySummary = if (proxy.enabled && proxy.type != ProxyType.DIRECT) {
+                            "${proxy.type.name}://${proxy.host}:${proxy.port} auth=$hasAuth"
+                        } else {
+                            "DIRECT"
+                        }
+                        DebugLogStore.log(
+                            "WEB_REQ",
+                            "${request?.method ?: "GET"} $requestUrl main=${request?.isForMainFrame == true} gesture=${request?.hasGesture() == true} proxy=$proxySummary",
+                        )
+                    }
+                }
+                return super.shouldInterceptRequest(view, request)
             }
 
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
@@ -355,9 +389,17 @@ class MainActivity : ComponentActivity() {
                     !password.isNullOrBlank() &&
                     (hostMatchesProxy || proxyRealm)
                 ) {
+                    DebugLogStore.log(
+                        "WEB_AUTH",
+                        "HTTP auth proceeded for host=${host.orEmpty()} realm=${realm.orEmpty()} via proxy ${proxy.type.name}://${proxy.host}:${proxy.port}",
+                    )
                     handler?.proceed(username, password)
                     return
                 }
+                DebugLogStore.log(
+                    "WEB_AUTH",
+                    "HTTP auth skipped for host=${host.orEmpty()} realm=${realm.orEmpty()} proxyEnabled=${proxy.enabled}",
+                )
                 super.onReceivedHttpAuthRequest(view, handler, host, realm)
             }
         }
@@ -555,6 +597,11 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        val openChannelUsername = intent?.getStringExtra(EXTRA_OPEN_CHANNEL_USERNAME).orEmpty()
+        if (openChannelUsername.isNotBlank()) {
+            openAuthorChannel(openChannelUsername)
+        }
+
         val chatId = intent?.getLongExtra("chat_id", 0L) ?: 0L
         val messageId = intent?.getLongExtra("message_id", 0L) ?: 0L
         val preview = intent?.getStringExtra("preview").orEmpty()
@@ -655,7 +702,12 @@ class MainActivity : ComponentActivity() {
                     ProxyProfilesStore.setActiveProfileId(this@MainActivity, profile.id)
                     ProxyProfilesStore.setProxyEnabled(this@MainActivity, true)
                     AppRepositories.updateProxyState(parsed)
-                    applyProxyToWebView(parsed)
+                    if (webUiReadyForProxy) {
+                        applyProxyToWebView(parsed)
+                    } else {
+                        pendingProxyForApply = parsed
+                        DebugLogStore.log("PROXY", "Proxy from link queued until WebUI fully loaded")
+                    }
                     Toast.makeText(
                         this@MainActivity,
                         "Proxy added: ${parsed.host}:${parsed.port}",
@@ -686,6 +738,10 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch {
             val latency = measureProxyLatency(parsed)
             ping.text = if (latency != null) "Ping: ${latency.toInt()} ms" else "Ping: timeout"
+            DebugLogStore.log(
+                "PROXY",
+                "Bottom sheet proxy ping ${parsed.type.name}://${parsed.host}:${parsed.port} => ${ping.text}",
+            )
         }
     }
 
@@ -725,8 +781,8 @@ class MainActivity : ComponentActivity() {
         startActivity(Intent(this, ModSettingsActivity::class.java))
     }
 
-    private fun openAuthorChannel() {
-        val channelHash = "@plugin_ai"
+    private fun openAuthorChannel(username: String = "plugin_ai") {
+        val channelHash = "@${username.trimStart('@')}"
         val channelUrl = "${REMOTE_WEBK_URL}#$channelHash"
         val script = """
             (function() {
@@ -861,11 +917,20 @@ class MainActivity : ComponentActivity() {
         val proxyConfig = parseProxyConfig(command.payload)
         if (proxyConfig == null) {
             AppRepositories.postProxyState()
+            DebugLogStore.log("PROXY", "Rejected proxy command from WebUI: invalid payload")
             return
         }
         lifecycleScope.launch {
             AppRepositories.updateProxyState(proxyConfig)
-            applyProxyToWebView(proxyConfig)
+            if (webUiReadyForProxy) {
+                applyProxyToWebView(proxyConfig)
+            } else {
+                pendingProxyForApply = proxyConfig
+                DebugLogStore.log(
+                    "PROXY",
+                    "Proxy command accepted, apply deferred until WebUI ready: ${proxyConfig.type.name}://${proxyConfig.host}:${proxyConfig.port}",
+                )
+            }
         }
     }
 
@@ -1583,12 +1648,14 @@ class MainActivity : ComponentActivity() {
                     '[class*=\"pageSign\"], .page-signIn, .page-signQR, .page-signUp, .page-authCode, .page-password'
                   );
                 var authHints = document.querySelector(
-                  'input[type=\"tel\"], input[name*=\"phone\"], input[autocomplete*=\"one-time\"], .qr-canvas, .auth-code-input'
+                  'input[type=\"tel\"], input[name*=\"phone\"], input[autocomplete*=\"one-time\"], .qr-canvas, .auth-code-input, ' +
+                  'input[type=\"password\"], [class*=\"auth-code\"], [class*=\"login\"], [class*=\"auth\"]'
                 );
-                var mainUiVisible = !!document.querySelector(
-                  '.left-sidebar .chatlist-container, .chatlist-container, .chat-main .bubbles, .chat-input .input-message-input'
-                );
-                var isAuthMode = !!authPages || (!!authHints && !mainUiVisible);
+                var chatInputVisible = !!document.querySelector('.chat-input .input-message-input, .chat-main .bubbles');
+                var chatListVisible = !!document.querySelector('.left-sidebar .chatlist-container .chatlist, .chatlist-container .chatlist');
+                var hash = String(location.hash || '').toLowerCase();
+                var hashLooksLikeDialog = hash.indexOf('@') >= 0 || hash.indexOf('/c/') >= 0 || hash.indexOf('-100') >= 0;
+                var isAuthMode = (!!authPages || !!authHints || !hashLooksLikeDialog) && !chatInputVisible && !chatListVisible;
 
                 var existing = document.querySelector('.tgweb-auth-import-actions');
                 var existingBranding = document.querySelector('.flygram-auth-branding');
@@ -2101,7 +2168,6 @@ class MainActivity : ComponentActivity() {
               applyCustomizations();
               syncSystemBars();
               ensureModSettingsEntry();
-              ensureAuthorChannelEntry();
               ensureDownloadsButton();
               ensureAuthImportButtons();
               bindProxyLinkIntercept();
@@ -2112,7 +2178,6 @@ class MainActivity : ComponentActivity() {
               setInterval(applyCustomizations, 2400);
               setInterval(syncSystemBars, 2000);
               setInterval(ensureModSettingsEntry, 1200);
-              setInterval(ensureAuthorChannelEntry, 1600);
               setInterval(ensureDownloadsButton, 1500);
               setInterval(ensureAuthImportButtons, 1200);
             })();
@@ -2188,7 +2253,9 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun applyProxyToWebView(proxyState: ProxyConfigSnapshot) {
+        DebugLogStore.log("PROXY", "Apply WebView proxy start: ${proxyStateForLog(proxyState)}")
         if (!WebViewFeature.isFeatureSupported(WebViewFeature.PROXY_OVERRIDE)) {
+            DebugLogStore.log("PROXY", "WebViewFeature.PROXY_OVERRIDE is not supported")
             AppRepositories.postProxyState(proxyState)
             return
         }
@@ -2202,6 +2269,9 @@ class MainActivity : ComponentActivity() {
                 )
             }.onFailure {
                 Log.w(TAG, "Unable to clear proxy override", it)
+                DebugLogStore.log("PROXY", "Clear proxy override failed: ${it::class.java.simpleName}: ${it.message}")
+            }.onSuccess {
+                DebugLogStore.log("PROXY", "Proxy override cleared (DIRECT)")
             }
             return
         }
@@ -2215,6 +2285,9 @@ class MainActivity : ComponentActivity() {
                 )
             }.onFailure {
                 Log.w(TAG, "Unable to clear proxy override", it)
+                DebugLogStore.log("PROXY", "Clear proxy override after invalid rule failed: ${it::class.java.simpleName}: ${it.message}")
+            }.onSuccess {
+                DebugLogStore.log("PROXY", "Proxy override cleared (invalid rule)")
             }
             return
         }
@@ -2236,10 +2309,14 @@ class MainActivity : ComponentActivity() {
                 webView.setHttpAuthUsernamePassword(proxyState.host, "", username, password)
             }.onFailure {
                 Log.w(TAG, "Unable to seed HTTP auth credentials for proxy host", it)
+                DebugLogStore.log("PROXY", "Proxy auth seed failed: ${it::class.java.simpleName}: ${it.message}")
+            }.onSuccess {
+                DebugLogStore.log("PROXY", "Proxy auth seed configured for host=${proxyState.host}")
             }
         }
 
         val applyRule: (String) -> Unit = { rule ->
+            DebugLogStore.log("PROXY", "Applying proxy rule: $rule")
             ProxyController.getInstance().setProxyOverride(
                 buildConfig(rule),
                 executor,
@@ -2248,10 +2325,14 @@ class MainActivity : ComponentActivity() {
         }
 
         val firstTry = runCatching { applyRule(proxyRule) }
-        if (firstTry.isSuccess) return
+        if (firstTry.isSuccess) {
+            DebugLogStore.log("PROXY", "Primary proxy rule applied successfully: $proxyRule")
+            return
+        }
 
         val firstError = firstTry.exceptionOrNull()
         Log.e(TAG, "Unable to apply WebView proxy rule: $proxyRule", firstError)
+        DebugLogStore.log("PROXY", "Primary proxy rule failed: $proxyRule -> ${firstError?.message}")
 
         val shouldTryLegacySocks =
             (proxyState.type == ProxyType.SOCKS5 || proxyState.type == ProxyType.MTPROTO) &&
@@ -2262,9 +2343,11 @@ class MainActivity : ComponentActivity() {
                 val fallbackTry = runCatching { applyRule(fallbackRule) }
                 if (fallbackTry.isSuccess) {
                     Log.w(TAG, "Applied legacy socks proxy rule fallback: $fallbackRule")
+                    DebugLogStore.log("PROXY", "Fallback proxy rule applied: $fallbackRule")
                     return
                 }
                 Log.e(TAG, "Unable to apply fallback WebView proxy rule: $fallbackRule", fallbackTry.exceptionOrNull())
+                DebugLogStore.log("PROXY", "Fallback proxy rule failed: $fallbackRule -> ${fallbackTry.exceptionOrNull()?.message}")
             }
         }
 
@@ -2275,6 +2358,9 @@ class MainActivity : ComponentActivity() {
             )
         }.onFailure { clearError ->
             Log.w(TAG, "Unable to rollback proxy override after failure", clearError)
+            DebugLogStore.log("PROXY", "Rollback clearProxy failed: ${clearError::class.java.simpleName}: ${clearError.message}")
+        }.onSuccess {
+            DebugLogStore.log("PROXY", "Proxy apply failed; override rolled back to DIRECT")
         }
     }
 
@@ -2290,6 +2376,13 @@ class MainActivity : ComponentActivity() {
         }
         // WebView ProxyController rejects credentials in proxy URL.
         return "$scheme://${proxyState.host}:${proxyState.port}"
+    }
+
+    private fun proxyStateForLog(proxyState: ProxyConfigSnapshot): String {
+        if (!proxyState.enabled || proxyState.type == ProxyType.DIRECT) return "DIRECT"
+        val hasAuth = !proxyState.username.isNullOrBlank() || !proxyState.password.isNullOrBlank()
+        val hasSecret = !proxyState.secret.isNullOrBlank()
+        return "${proxyState.type.name}://${proxyState.host}:${proxyState.port} auth=$hasAuth secret=$hasSecret"
     }
 
     private fun isNetworkAvailable(): Boolean {
@@ -2330,6 +2423,7 @@ class MainActivity : ComponentActivity() {
     companion object {
         private const val TAG = "MainActivity"
         private const val JS_BRIDGE_NAME = "AndroidBridge"
+        const val EXTRA_OPEN_CHANNEL_USERNAME = "extra_open_channel_username"
         private const val BUNDLED_WEBK_URL = "file:///android_asset/webapp/webk/index.html"
         private const val BUNDLED_WEBK_SRC_PUBLIC_URL = "file:///android_asset/webapp/webk-src/public/index.html"
         private const val REMOTE_WEBK_URL = "https://web.telegram.org/k/"

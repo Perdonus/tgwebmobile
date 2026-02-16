@@ -18,6 +18,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SwitchCompat
 import androidx.lifecycle.lifecycleScope
 import com.tgweb.core.data.AppRepositories
+import com.tgweb.core.data.DebugLogStore
 import com.tgweb.core.webbridge.ProxyConfigSnapshot
 import com.tgweb.core.webbridge.ProxyType
 import kotlinx.coroutines.Dispatchers
@@ -174,11 +175,16 @@ class ProxySettingsActivity : AppCompatActivity() {
         lifecycleScope.launch {
             val state = ProxyProfilesStore.resolveActiveConfig(this@ProxySettingsActivity)
             AppRepositories.updateProxyState(state)
+            DebugLogStore.log(
+                "PROXY",
+                "Apply state from settings: enabled=${state.enabled} type=${state.type.name} host=${state.host}:${state.port} auth=${!state.username.isNullOrBlank() || !state.password.isNullOrBlank()}",
+            )
         }
     }
 
     private fun handleIncomingProxyUri(uri: Uri) {
         val parsed = ProxyLinkParser.parse(uri) ?: return
+        DebugLogStore.log("PROXY", "Incoming proxy URI imported: $uri")
         val profile = ProxyProfile(
             title = ProxyProfilesStore.defaultTitle(parsed),
             config = parsed.copy(enabled = true),
@@ -203,8 +209,10 @@ class ProxySettingsActivity : AppCompatActivity() {
                 val parsed = ProxyLinkParser.parse(input.text?.toString())
                 if (parsed == null) {
                     showToast(getString(R.string.proxy_import_invalid))
+                    DebugLogStore.log("PROXY", "Proxy import failed: invalid link")
                     return@setPositiveButton
                 }
+                DebugLogStore.log("PROXY", "Proxy import success: ${parsed.type.name}://${parsed.host}:${parsed.port}")
                 val profile = ProxyProfile(
                     title = ProxyProfilesStore.defaultTitle(parsed),
                     config = parsed.copy(enabled = true),
@@ -332,6 +340,10 @@ class ProxySettingsActivity : AppCompatActivity() {
                     } else {
                         getString(R.string.proxy_health_timeout)
                     }
+                    DebugLogStore.log(
+                        "PROXY",
+                        "Health check ${profile.title} ${profile.config.type.name}://${profile.config.host}:${profile.config.port} -> ${health[profile.id]}",
+                    )
                     renderList()
                 }
                 delay(PROXY_HEALTH_INTERVAL_MS)
@@ -377,6 +389,11 @@ class ProxySettingsActivity : AppCompatActivity() {
                 ProxyType.DIRECT -> return@withContext null
             }
             (System.nanoTime() - startedAt) / 1_000_000.0
+        }.onFailure {
+            DebugLogStore.log(
+                "PROXY",
+                "Latency check failed for ${state.type.name}://${state.host}:${state.port}: ${it::class.java.simpleName}: ${it.message}",
+            )
         }.getOrNull()
     }
 
@@ -392,4 +409,3 @@ class ProxySettingsActivity : AppCompatActivity() {
         private const val PING_URL = "https://web.telegram.org/"
     }
 }
-

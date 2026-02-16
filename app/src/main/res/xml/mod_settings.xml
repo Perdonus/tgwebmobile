@@ -2,11 +2,6 @@
 <PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android">
 
     <PreferenceCategory android:title="@string/mod_category_runtime">
-        <SeekBarPreference
-            android:key="mod_interface_scale"
-            android:title="@string/mod_scale_title"
-            android:defaultValue="100" />
-
         <SwitchPreferenceCompat
             android:key="mod_keep_alive"
             android:title="@string/mod_keep_alive_title"
@@ -19,17 +14,26 @@
             android:summary="@string/mod_push_permission_missing" />
     </PreferenceCategory>
 
-    <PreferenceCategory android:title="@string/mod_category_network">
-        <Preference
-            android:key="mod_proxy_settings"
-            android:title="@string/mod_proxy_title"
-            android:summary="@string/mod_proxy_summary" />
+    <PreferenceCategory android:title="@string/mod_category_customization">
+        <SeekBarPreference
+            android:key="mod_interface_scale"
+            android:title="@string/mod_scale_title"
+            android:defaultValue="100" />
 
         <Preference
             android:key="mod_customization"
             android:title="@string/mod_customization_title"
             android:summary="@string/mod_customization_summary" />
+    </PreferenceCategory>
 
+    <PreferenceCategory android:title="@string/mod_category_network">
+        <Preference
+            android:key="mod_proxy_settings"
+            android:title="@string/mod_proxy_title"
+            android:summary="@string/mod_proxy_summary" />
+    </PreferenceCategory>
+
+    <PreferenceCategory android:title="@string/mod_category_tools">
         <Preference
             android:key="mod_session_tools"
             android:title="@string/mod_session_tools_title"
@@ -50,6 +54,11 @@
     </PreferenceCategory>
 
     <PreferenceCategory android:title="@string/mod_category_about">
+        <Preference
+            android:key="mod_author_channel"
+            android:title="@string/mod_author_channel_title"
+            android:summary="@string/mod_author_channel_summary" />
+
         <Preference
             android:key="mod_version"
             android:title="@string/mod_version_title" />

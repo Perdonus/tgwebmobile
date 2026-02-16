@@ -11,15 +11,20 @@ import android.provider.Settings
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.tgweb.core.data.AppRepositories
+import com.tgweb.core.data.DebugLogStore
 import com.tgweb.core.data.MessageItem
 import com.tgweb.core.data.NotificationService
+import com.tgweb.core.data.PushDebugResult
 import com.tgweb.core.webbridge.ProxyType
+import com.google.firebase.messaging.FirebaseMessaging
+import kotlinx.coroutines.suspendCancellableCoroutine
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.InetSocketAddress
 import java.net.Proxy
 import java.net.URL
 import java.util.UUID
+import kotlin.coroutines.resume
 
 class AndroidNotificationService(
     private val context: Context,
@@ -63,10 +68,15 @@ class AndroidNotificationService(
             .put("capabilities", listOf("webk", "offline_r1", "proxy", "background_push"))
             .toString()
 
+        DebugLogStore.log(
+            "PUSH_REG",
+            "Register device token requested: deviceId=$deviceId tokenPrefix=${fcmToken.take(16)}... backendCount=${backendBaseUrls.size}",
+        )
         postJson(path = "/v1/devices/register", body = body)
     }
 
     override suspend fun handlePush(payload: Map<String, String>) {
+        DebugLogStore.log("PUSH_RECV", "Incoming FCM payload keys=${payload.keys.joinToString(",")}")
         val chatId = payload["chat_id"]?.toLongOrNull() ?: 0L
         val text = payload["text"].orEmpty()
         val messageId = payload["message_id"]?.toLongOrNull() ?: System.currentTimeMillis()
@@ -85,6 +95,69 @@ class AndroidNotificationService(
             )
             sendAck(messageId = messageId.toString())
         }
+    }
+
+    override suspend fun sendServerTestPush(): PushDebugResult {
+        if (backendBaseUrls.isEmpty()) {
+            return PushDebugResult(
+                success = false,
+                title = "Backend URL is not configured",
+                details = "No backend base URLs are available.",
+            )
+        }
+
+        val logs = StringBuilder()
+        fun append(line: String) {
+            logs.appendLine(line)
+            DebugLogStore.log("PUSH_TEST", line)
+        }
+
+        append("Start server-side push test")
+        append("Device: $deviceId")
+        append("Backends: ${backendBaseUrls.joinToString(", ")}")
+        append("Proxy: ${proxyDebugSummary(AppRepositories.getProxyState())}")
+
+        val fcmToken = fetchFcmTokenOrNull()
+        if (!fcmToken.isNullOrBlank()) {
+            append("FCM token acquired: ${fcmToken.take(20)}...")
+            runCatching { registerDeviceToken(fcmToken) }
+                .onSuccess { append("Device re-registration: OK") }
+                .onFailure { append("Device re-registration failed: ${it.message}") }
+        } else {
+            append("FCM token unavailable. Sending by known deviceId only.")
+        }
+
+        val messageId = System.currentTimeMillis().toString()
+        val preview = "FlyGram debug push ${UUID.randomUUID().toString().take(8)}"
+        val body = JSONObject()
+            .put("deviceIds", org.json.JSONArray().put(deviceId))
+            .put("priority", "high")
+            .put(
+                "data",
+                JSONObject()
+                    .put("chat_id", "777000")
+                    .put("message_id", messageId)
+                    .put("text", preview),
+            )
+            .toString()
+        append("Request body prepared: message_id=$messageId")
+
+        val trace = postJsonWithTrace(path = "/v1/push/send", body = body, tag = "PUSH_TEST")
+        append("Final result: success=${trace.success} url=${trace.url}")
+        append("HTTP code: ${trace.code ?: -1}")
+        if (!trace.responseBody.isNullOrBlank()) {
+            append("Response body: ${trace.responseBody}")
+        }
+        if (!trace.error.isNullOrBlank()) {
+            append("Error: ${trace.error}")
+        }
+        append("Done")
+
+        return PushDebugResult(
+            success = trace.success,
+            title = if (trace.success) "Server push request sent" else "Server push request failed",
+            details = logs.toString().trim(),
+        )
     }
 
     override fun showMessageNotification(event: MessageItem) {
@@ -129,33 +202,71 @@ class AndroidNotificationService(
     }
 
     private suspend fun postJson(path: String, body: String) {
+        postJsonWithTrace(path = path, body = body, tag = "PUSH_HTTP")
+    }
+
+    private suspend fun postJsonWithTrace(path: String, body: String, tag: String): PostTrace {
+        var lastTrace = PostTrace(success = false, url = "", code = null, responseBody = "", error = "No backend URLs")
+        val proxyState = AppRepositories.getProxyState()
         backendBaseUrls.forEach { base ->
             val fullUrl = "$base$path"
-            val sent = runCatching {
-                val connection = openConnection(fullUrl)
+            val startedAt = System.currentTimeMillis()
+            val trace = runCatching {
+                val connection = openConnection(fullUrl, proxyState)
                 connection.requestMethod = "POST"
+                connection.connectTimeout = 12_000
+                connection.readTimeout = 15_000
                 connection.setRequestProperty("Content-Type", "application/json")
                 connection.setRequestProperty(HEADER_APP_ID, HEADER_APP_ID_VALUE)
                 val secret = BuildConfig.PUSH_SHARED_SECRET.trim()
-                if (secret.isNotBlank()) {
+                val hasSecret = secret.isNotBlank()
+                if (hasSecret) {
                     connection.setRequestProperty(HEADER_SHARED_SECRET, secret)
                 }
                 connection.doOutput = true
                 connection.outputStream.bufferedWriter().use { writer ->
                     writer.write(body)
                 }
-                connection.inputStream.close()
+
+                val code = connection.responseCode
+                val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+                val response = runCatching {
+                    stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+                }.getOrDefault("")
                 connection.disconnect()
-                true
-            }.getOrElse { false }
-            if (sent) {
-                return
+                val elapsed = System.currentTimeMillis() - startedAt
+                DebugLogStore.log(
+                    tag,
+                    "POST $fullUrl -> code=$code ${elapsed}ms headers(app=$HEADER_APP_ID_VALUE,auth=${if (hasSecret) "on" else "off"}) proxy=${proxyDebugSummary(proxyState)}",
+                )
+                PostTrace(
+                    success = code in 200..299,
+                    url = fullUrl,
+                    code = code,
+                    responseBody = response.take(1200),
+                    error = if (code in 200..299) null else "HTTP $code",
+                )
+            }.getOrElse { error ->
+                val elapsed = System.currentTimeMillis() - startedAt
+                DebugLogStore.log(
+                    tag,
+                    "POST $fullUrl failed in ${elapsed}ms: ${error::class.java.simpleName}: ${error.message} proxy=${proxyDebugSummary(proxyState)}",
+                )
+                PostTrace(
+                    success = false,
+                    url = fullUrl,
+                    code = null,
+                    responseBody = "",
+                    error = "${error::class.java.simpleName}: ${error.message}",
+                )
             }
+            lastTrace = trace
+            if (trace.success) return trace
         }
+        return lastTrace
     }
 
-    private fun openConnection(url: String): HttpURLConnection {
-        val proxyState = AppRepositories.getProxyState()
+    private fun openConnection(url: String, proxyState: com.tgweb.core.webbridge.ProxyConfigSnapshot): HttpURLConnection {
         val proxy = when {
             !proxyState.enabled -> Proxy.NO_PROXY
             proxyState.type == ProxyType.HTTP -> {
@@ -167,6 +278,29 @@ class AndroidNotificationService(
             else -> Proxy.NO_PROXY
         }
         return URL(url).openConnection(proxy) as HttpURLConnection
+    }
+
+    private fun proxyDebugSummary(proxyState: com.tgweb.core.webbridge.ProxyConfigSnapshot): String {
+        if (!proxyState.enabled || proxyState.type == ProxyType.DIRECT) return "direct"
+        val hasAuth = !proxyState.username.isNullOrBlank() || !proxyState.password.isNullOrBlank()
+        val hasSecret = !proxyState.secret.isNullOrBlank()
+        return "${proxyState.type.name.lowercase()}://${proxyState.host}:${proxyState.port} auth=$hasAuth mtprotoSecret=$hasSecret"
+    }
+
+    private suspend fun fetchFcmTokenOrNull(): String? {
+        return suspendCancellableCoroutine { continuation ->
+            runCatching {
+                FirebaseMessaging.getInstance().token
+                    .addOnSuccessListener { token ->
+                        if (!continuation.isCompleted) continuation.resume(token)
+                    }
+                    .addOnFailureListener {
+                        if (!continuation.isCompleted) continuation.resume(null)
+                    }
+            }.onFailure {
+                if (!continuation.isCompleted) continuation.resume(null)
+            }
+        }
     }
 
     private fun getNotificationColor(): Int {
@@ -200,4 +334,12 @@ class AndroidNotificationService(
         const val CHANNEL_SILENT = "flygram_silent"
         const val CHANNEL_DOWNLOADS = "flygram_downloads"
     }
+
+    private data class PostTrace(
+        val success: Boolean,
+        val url: String,
+        val code: Int?,
+        val responseBody: String,
+        val error: String?,
+    )
 }

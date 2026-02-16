@@ -34,6 +34,7 @@ class MainApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         runCatching { SessionBackupManager.applyPendingImportIfNeeded(this) }
+        ensureRuntimeDefaults()
 
         val database = TelegramDatabaseFactory.create(this, passphrase = "qa-only-passphrase")
         val tdLibGateway = StubTdLibGateway()
@@ -264,5 +265,30 @@ class MainApplication : Application() {
 
     companion object {
         private const val KEY_PROXY_STATE = "proxy_state"
+    }
+
+    private fun ensureRuntimeDefaults() {
+        val prefs = getSharedPreferences(KeepAliveService.PREFS, Context.MODE_PRIVATE)
+        val editor = prefs.edit()
+        var changed = false
+        if (!prefs.contains(KeepAliveService.KEY_MD3_EFFECTS)) {
+            editor.putBoolean(KeepAliveService.KEY_MD3_EFFECTS, true)
+            changed = true
+        }
+        if (!prefs.contains(KeepAliveService.KEY_DYNAMIC_COLOR)) {
+            editor.putBoolean(KeepAliveService.KEY_DYNAMIC_COLOR, true)
+            changed = true
+        }
+        if (!prefs.contains(KeepAliveService.KEY_MD3_CONTAINER_STYLE)) {
+            editor.putString(KeepAliveService.KEY_MD3_CONTAINER_STYLE, "segmented")
+            changed = true
+        }
+        if (!prefs.contains(KeepAliveService.KEY_UI_SCALE_PERCENT)) {
+            editor.putInt(KeepAliveService.KEY_UI_SCALE_PERCENT, 100)
+            changed = true
+        }
+        if (changed) {
+            editor.apply()
+        }
     }
 }

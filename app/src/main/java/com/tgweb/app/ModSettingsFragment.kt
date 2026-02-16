@@ -33,6 +33,7 @@ class ModSettingsFragment : PreferenceFragmentCompat() {
         bindSessionToolsPreference()
         bindDownloadsEntryPreference()
         bindCustomizationEntryPreference()
+        bindAuthorChannelPreference()
         bindVersionPreference()
     }
 
@@ -131,6 +132,19 @@ class ModSettingsFragment : PreferenceFragmentCompat() {
         }
     }
 
+    private fun bindAuthorChannelPreference() {
+        val pref = findPreference<Preference>(KEY_AUTHOR_CHANNEL) ?: return
+        pref.setOnPreferenceClickListener {
+            startActivity(
+                Intent(requireContext(), MainActivity::class.java).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                    putExtra(MainActivity.EXTRA_OPEN_CHANNEL_USERNAME, "plugin_ai")
+                },
+            )
+            true
+        }
+    }
+
     private fun bindVersionPreference() {
         val versionName = runCatching {
             requireContext().packageManager.getPackageInfo(requireContext().packageName, 0).versionName
@@ -195,6 +209,7 @@ class ModSettingsFragment : PreferenceFragmentCompat() {
         private const val KEY_DOWNLOADS_MANAGER = "mod_downloads_manager"
         private const val KEY_CUSTOMIZATION = "mod_customization"
         private const val KEY_BUNDLED_WEB = "mod_use_bundled_web"
+        private const val KEY_AUTHOR_CHANNEL = "mod_author_channel"
         private const val KEY_VERSION = "mod_version"
     }
 }

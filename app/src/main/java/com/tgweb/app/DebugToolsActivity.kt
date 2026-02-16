@@ -1,17 +1,25 @@
 package com.tgweb.app
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
+import android.graphics.Typeface
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.view.MenuItem
+import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.Button
 import android.widget.TextView
+import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
 import com.google.firebase.messaging.FirebaseMessaging
 import com.tgweb.core.data.AppRepositories
-import com.tgweb.core.data.MessageItem
-import kotlin.random.Random
+import com.tgweb.core.data.DebugLogStore
+import kotlinx.coroutines.launch
 
 class DebugToolsActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -34,6 +42,7 @@ class DebugToolsActivity : AppCompatActivity() {
         val statusText = findViewById<TextView>(R.id.debugStatusText)
         val testButton = findViewById<Button>(R.id.debugTestNotificationButton)
         val settingsButton = findViewById<Button>(R.id.debugOpenNotificationSettingsButton)
+        val logsButton = findViewById<Button>(R.id.debugOpenLogsButton)
 
         statusText.text = buildStatus()
         runCatching {
@@ -46,18 +55,26 @@ class DebugToolsActivity : AppCompatActivity() {
                 }
         }
         testButton.setOnClickListener {
-            val randomId = Random.nextLong(100_000, 999_999)
-            AppRepositories.notificationService.showMessageNotification(
-                MessageItem(
-                    messageId = randomId,
-                    chatId = Random.nextLong(1000, 9999),
-                    senderUserId = 0L,
-                    text = randomDebugMessage(),
-                    status = "received",
-                    createdAt = System.currentTimeMillis(),
-                ),
-            )
-            statusText.text = buildStatus()
+            lifecycleScope.launch {
+                statusText.text = buildStatus() + "\nPush test: sending via backend..."
+                val result = runCatching {
+                    AppRepositories.notificationService.sendServerTestPush()
+                }.getOrElse { error ->
+                    com.tgweb.core.data.PushDebugResult(
+                        success = false,
+                        title = "Push test failed",
+                        details = "Exception: ${error::class.java.simpleName}: ${error.message}\n\n${DebugLogStore.dump()}",
+                    )
+                }
+
+                statusText.text = buildStatus() +
+                    "\nPush test: " + if (result.success) "request sent" else "failed"
+                showLogDialog(
+                    title = result.title,
+                    logs = result.details,
+                    allowClear = false,
+                )
+            }
         }
         settingsButton.setOnClickListener {
             val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -67,6 +84,13 @@ class DebugToolsActivity : AppCompatActivity() {
                 Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
             }
             startActivity(intent)
+        }
+        logsButton.setOnClickListener {
+            showLogDialog(
+                title = getString(R.string.debug_logs_title),
+                logs = DebugLogStore.dump(),
+                allowClear = true,
+            )
         }
     }
 
@@ -84,14 +108,41 @@ class DebugToolsActivity : AppCompatActivity() {
         return "Notifications: ${if (allowed) "enabled" else "disabled"}\nKeep alive: ${if (keepAliveEnabled) "enabled" else "disabled"}"
     }
 
-    private fun randomDebugMessage(): String {
-        val variants = listOf(
-            "Debug push: build looks alive",
-            "Debug push: random test notification",
-            "Debug push: background channel check",
-            "Debug push: keep-alive path is running",
-            "Debug push: UI bridge event delivered",
-        )
-        return variants.random()
+    private fun showLogDialog(title: String, logs: String, allowClear: Boolean) {
+        val contentView = ScrollView(this).apply {
+            val body = TextView(this@DebugToolsActivity).apply {
+                text = if (logs.isBlank()) "No logs yet." else logs
+                textSize = 12f
+                typeface = Typeface.MONOSPACE
+                setTextIsSelectable(true)
+                setPadding(28, 20, 28, 20)
+            }
+            addView(
+                body,
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                ),
+            )
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle(title)
+            .setView(contentView)
+            .setPositiveButton(R.string.debug_copy_logs) { _, _ ->
+                val manager = getSystemService(ClipboardManager::class.java)
+                manager?.setPrimaryClip(ClipData.newPlainText("flygram-debug-logs", logs))
+                Toast.makeText(this, "Logs copied", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton(R.string.debug_close_logs, null)
+            .apply {
+                if (allowClear) {
+                    setNeutralButton(R.string.debug_clear_logs) { _, _ ->
+                        DebugLogStore.clear()
+                        Toast.makeText(this@DebugToolsActivity, "Logs cleared", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+            .show()
     }
 }
