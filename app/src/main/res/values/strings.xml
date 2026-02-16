@@ -103,8 +103,6 @@
     <string name="custom_container_style_segmented">Сегменты</string>
     <string name="custom_container_style_dividers">Разделители</string>
     <string name="custom_sidebar_menu_title">Боковое меню</string>
-    <string name="custom_menu_show_mod_settings">Показывать кнопку &quot;Настройки FlyGram&quot;</string>
-    <string name="custom_menu_show_downloads">Показывать кнопку загрузок в шапке</string>
     <string name="custom_menu_downloads_position">Положение кнопки загрузок</string>
     <string name="custom_menu_downloads_position_start">Слева</string>
     <string name="custom_menu_downloads_position_end">Справа</string>

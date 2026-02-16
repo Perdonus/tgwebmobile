@@ -1170,8 +1170,8 @@ class MainActivity : ComponentActivity() {
             .orEmpty()
         val md3HideBasePlates = runtimePrefs.getBoolean(KeepAliveService.KEY_MD3_HIDE_BASE_PLATES, false)
         val menuHideMore = runtimePrefs.getBoolean(KeepAliveService.KEY_MENU_HIDE_MORE, true)
-        val menuShowDownloads = runtimePrefs.getBoolean(KeepAliveService.KEY_MENU_SHOW_DOWNLOADS, true)
-        val menuShowModSettings = runtimePrefs.getBoolean(KeepAliveService.KEY_MENU_SHOW_MOD_SETTINGS, true)
+        val menuShowDownloads = true
+        val menuShowModSettings = true
         val menuShowDividers = runtimePrefs.getBoolean(KeepAliveService.KEY_MENU_SHOW_DIVIDERS, false)
         val menuDownloadsPosition = runtimePrefs
             .getString(KeepAliveService.KEY_MENU_DOWNLOADS_POSITION, "end")
@@ -1204,11 +1204,7 @@ class MainActivity : ComponentActivity() {
               };
               var flygramAuthLogo = $authLogoQuoted;
               var flygramAuthSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160" viewBox="0 0 160 160" aria-label="FlyGram Logo">' +
-                '<defs><linearGradient id="flygramGrad" x1="0" y1="0" x2="1" y2="1">' +
-                '<stop offset="0%" stop-color="#FFFFFF"/><stop offset="100%" stop-color="#EAF3FF"/>' +
-                '</linearGradient></defs>' +
-                '<path fill="url(#flygramGrad)" stroke="#36A8FF" stroke-width="3.2" stroke-linejoin="round" d="M12 86L143 36c4-2 8 2 7 6l-20 81c-1 5-7 7-11 4L86 104l-19 18c-4 4-10 1-10-4V95L16 80c-6-2-6-10-1-12z"/>' +
-                '<path fill="none" stroke="#36A8FF" stroke-width="3.2" stroke-linecap="round" d="M57 96l68-50M57 119l16-28"/>' +
+                '<image href="' + (flygramAuthLogo || '') + '" x="0" y="0" width="160" height="160" preserveAspectRatio="xMidYMid slice" />' +
               '</svg>';
 
               var send = function(type, payload) {
@@ -1734,65 +1730,81 @@ class MainActivity : ComponentActivity() {
               };
 
               var ensureDownloadsButton = function() {
-                var header = document.querySelector('.left-header');
-                if (!header) { return; }
-                var existing = header.querySelector('.tgweb-downloads-button');
+                var header = document.querySelector(
+                  '.left-header,.sidebar-header,.left-sidebar .topbar,.chatlist-topbar,.tabs-tab-header,.folders-tabs-header'
+                );
+                if (header && header.closest && header.closest('.chat-topbar,.chat-info-container')) {
+                  header = null;
+                }
+                var existing = document.querySelector('.tgweb-downloads-button');
                 if (!custom.menuShowDownloads) {
                   if (existing) { existing.remove(); }
                   return;
                 }
-                if (existing) {
-                  if (custom.menuDownloadsPosition === 'start') {
-                    header.insertBefore(existing, header.firstChild || null);
-                  } else {
-                    header.appendChild(existing);
-                  }
-                  return;
+                var button = existing;
+                if (!button) {
+                  button = document.createElement('button');
+                  button.className = 'btn-icon tgweb-downloads-button';
+                  button.type = 'button';
+                  button.setAttribute('aria-label', 'Downloads');
+                  button.textContent = '⬇';
+                  button.style.fontSize = '18px';
+                  button.style.lineHeight = '18px';
+                  button.style.width = '34px';
+                  button.style.height = '34px';
+                  button.style.border = '0';
+                  button.style.borderRadius = '10px';
+                  button.style.background = 'transparent';
+                  button.style.color = 'inherit';
+                  button.style.cursor = 'pointer';
+                  button.style.position = 'relative';
+                  button.style.zIndex = '999998';
+                  button.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    send('${BridgeCommandTypes.OPEN_DOWNLOADS}', {});
+                  }, { passive: false });
+
+                  var badge = document.createElement('span');
+                  badge.className = 'tgweb-downloads-badge';
+                  badge.style.position = 'absolute';
+                  badge.style.top = '-4px';
+                  badge.style.right = '-4px';
+                  badge.style.width = '17px';
+                  badge.style.height = '17px';
+                  badge.style.borderRadius = '999px';
+                  badge.style.background = '#ff4d4f';
+                  badge.style.color = '#fff';
+                  badge.style.fontSize = '10px';
+                  badge.style.fontWeight = '700';
+                  badge.style.display = 'none';
+                  badge.style.alignItems = 'center';
+                  badge.style.justifyContent = 'center';
+                  badge.textContent = '0';
+                  button.appendChild(badge);
                 }
 
-                var button = document.createElement('button');
-                button.className = 'btn-icon tgweb-downloads-button';
-                button.type = 'button';
-                button.setAttribute('aria-label', 'Downloads');
-                button.textContent = '⬇';
-                button.style.marginInlineStart = '6px';
-                button.style.fontSize = '18px';
-                button.style.lineHeight = '18px';
-                button.style.width = '34px';
-                button.style.height = '34px';
-                button.style.border = '0';
-                button.style.borderRadius = '10px';
-                button.style.background = 'transparent';
-                button.style.color = 'inherit';
-                button.style.cursor = 'pointer';
-                button.style.position = 'relative';
-                button.addEventListener('click', function(e) {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  send('${BridgeCommandTypes.OPEN_DOWNLOADS}', {});
-                }, { passive: false });
-
-                var badge = document.createElement('span');
-                badge.className = 'tgweb-downloads-badge';
-                badge.style.position = 'absolute';
-                badge.style.top = '-4px';
-                badge.style.right = '-4px';
-                badge.style.width = '17px';
-                badge.style.height = '17px';
-                badge.style.borderRadius = '999px';
-                badge.style.background = '#ff4d4f';
-                badge.style.color = '#fff';
-                badge.style.fontSize = '10px';
-                badge.style.fontWeight = '700';
-                badge.style.display = 'none';
-                badge.style.alignItems = 'center';
-                badge.style.justifyContent = 'center';
-                badge.textContent = '0';
-                button.appendChild(badge);
-                if (custom.menuDownloadsPosition === 'start') {
-                  header.insertBefore(button, header.firstChild || null);
+                if (header) {
+                  button.style.position = 'relative';
+                  button.style.top = '';
+                  button.style.right = '';
+                  button.style.left = '';
+                  button.style.marginInlineStart = '6px';
+                  if (custom.menuDownloadsPosition === 'start') {
+                    header.insertBefore(button, header.firstChild || null);
+                  } else {
+                    header.appendChild(button);
+                  }
                 } else {
-                  header.appendChild(button);
+                  // Fallback when Telegram header selector changes.
+                  button.style.position = 'fixed';
+                  button.style.top = '12px';
+                  button.style.right = '12px';
+                  button.style.left = '';
+                  button.style.marginInlineStart = '0';
+                  if (button.parentElement !== document.body) {
+                    document.body.appendChild(button);
+                  }
                 }
                 updateDownloadsBadge();
               };
@@ -1819,13 +1831,19 @@ class MainActivity : ComponentActivity() {
               var ensureAuthImportButtons = function() {
                 var authRoot = document.getElementById('auth-pages') ||
                   document.querySelector('.auth-pages,.login-page,[class*=\"auth-pages\"],.page-signIn,.page-signQR,.page-signUp,.page-authCode,.page-password');
-                var authInteractive = !!(authRoot && authRoot.querySelector &&
-                  authRoot.querySelector('input[type=\"tel\"],input[type=\"password\"],.qr-canvas,.auth-code-input,.sign-logo,.auth-image'));
-                var authVisible = !!(authRoot && authRoot.offsetParent !== null);
-                var mainUiVisible = !!document.querySelector(
-                  '.left-sidebar .chatlist .chatlist-chat,.chat-main .bubbles,.chat-input .input-message-input'
-                );
-                var isAuthMode = (authVisible || authInteractive) && !mainUiVisible;
+                var authVisible = !!(authRoot &&
+                  authRoot.offsetParent !== null &&
+                  authRoot.getBoundingClientRect &&
+                  authRoot.getBoundingClientRect().height > 120);
+                var authActivePage = authRoot && authRoot.querySelector
+                  ? authRoot.querySelector('.page.active,.page-signIn,.page-signQR,.page-signUp,.page-authCode,.page-password,.page-sign-in,.page-sign-up,[class*=\"page-sign\"],[class*=\"sign\"]')
+                  : null;
+                var authActiveVisible = !!(authActivePage && authActivePage.offsetParent !== null);
+                var authInteractive = !!(authVisible && authRoot && authRoot.querySelector &&
+                  authRoot.querySelector('input[type=\"tel\"],input[type=\"password\"],.qr-canvas,.auth-code-input'));
+                var authLogoNode = document.querySelector('.auth-image .sign-logo,.auth-image svg.sign-logo,.auth-image');
+                var authLogoVisible = !!(authLogoNode && authLogoNode.offsetParent !== null);
+                var isAuthMode = !!authRoot && (authVisible || authActiveVisible || authInteractive || authLogoVisible);
 
                 var existing = document.querySelector('.tgweb-auth-import-actions');
                 var existingBranding = document.querySelector('.flygram-auth-branding');
@@ -1836,17 +1854,9 @@ class MainActivity : ComponentActivity() {
                 }
 
                 var authImage = authRoot.querySelector('.auth-image');
-                if (authImage) {
+                if (authImage && flygramAuthLogo && flygramAuthLogo.length > 32) {
                   authImage.innerHTML = flygramAuthSvg;
                 }
-
-                var authPage = authRoot.querySelector(
-                  '.page.active,.page-signIn,.page-signQR,.page-signUp,.page-authCode,.page-password,.page-sign-in,.page-sign-up,[class*=\"page-sign\"],[class*=\"sign\"]'
-                );
-                var target = (authPage && authPage.querySelector && authPage.querySelector('.container,.scrollable-content,.tabs-container,.auth-placeholder')) ||
-                  (authRoot.querySelector && authRoot.querySelector('.container,.scrollable-content,.tabs-container,.auth-placeholder')) ||
-                  authRoot;
-                if (!target) { return; }
 
                 var branding = existingBranding || document.createElement('div');
                 branding.className = 'flygram-auth-branding';
@@ -1854,8 +1864,15 @@ class MainActivity : ComponentActivity() {
                 branding.style.flexDirection = 'column';
                 branding.style.alignItems = 'center';
                 branding.style.gap = '6px';
-                branding.style.margin = '4px auto 10px';
+                branding.style.margin = '0';
                 branding.style.pointerEvents = 'none';
+                branding.style.position = 'fixed';
+                branding.style.left = '50%';
+                branding.style.top = '12px';
+                branding.style.transform = 'translateX(-50%)';
+                branding.style.zIndex = '999999';
+                branding.style.textAlign = 'center';
+                branding.style.maxWidth = '92vw';
 
                 if (!branding.querySelector('.flygram-auth-branding-title')) {
                   var title = document.createElement('div');
@@ -1874,8 +1891,8 @@ class MainActivity : ComponentActivity() {
                   branding.appendChild(subtitle);
                 }
 
-                if (!branding.parentElement || branding.parentElement !== target) {
-                  target.insertBefore(branding, target.firstChild || null);
+                if (!branding.parentElement || branding.parentElement !== document.body) {
+                  document.body.appendChild(branding);
                 }
 
                 var wrap = existing || document.createElement('div');
@@ -1885,7 +1902,13 @@ class MainActivity : ComponentActivity() {
                 wrap.style.gap = '8px';
                 wrap.style.width = '100%';
                 wrap.style.maxWidth = '320px';
-                wrap.style.margin = '14px auto 0';
+                wrap.style.margin = '0';
+                wrap.style.position = 'fixed';
+                wrap.style.left = '50%';
+                wrap.style.bottom = '18px';
+                wrap.style.transform = 'translateX(-50%)';
+                wrap.style.zIndex = '999999';
+                wrap.style.padding = '0 8px';
 
                 var makeButton = function(text, mode) {
                   var btn = document.createElement('button');
@@ -1913,8 +1936,8 @@ class MainActivity : ComponentActivity() {
                 wrap.appendChild(makeButton('Импортировать Session', '${SessionToolsActivity.ACTION_IMPORT_SESSION}'));
                 wrap.appendChild(makeButton('Импортировать tdata', '${SessionToolsActivity.ACTION_IMPORT_TDATA}'));
 
-                if (!wrap.parentElement || wrap.parentElement !== target) {
-                  target.appendChild(wrap);
+                if (!wrap.parentElement || wrap.parentElement !== document.body) {
+                  document.body.appendChild(wrap);
                 }
               };
 

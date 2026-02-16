@@ -64,20 +64,6 @@
             android:text="@string/custom_sidebar_menu_title"
             android:textStyle="bold" />
 
-        <Switch
-            android:id="@+id/customMenuShowModSettingsSwitch"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:text="@string/custom_menu_show_mod_settings" />
-
-        <Switch
-            android:id="@+id/customMenuShowDownloadsSwitch"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:text="@string/custom_menu_show_downloads" />
-
         <TextView
             android:id="@+id/customMenuDownloadsPositionTitle"
             android:layout_width="match_parent"

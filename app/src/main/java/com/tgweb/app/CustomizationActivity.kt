@@ -41,8 +41,6 @@ class CustomizationActivity : AppCompatActivity() {
         val md3HideBasePlates = findViewById<Switch>(R.id.customMd3HideBasePlatesSwitch)
         val dynamicColor = findViewById<Switch>(R.id.customDynamicColorSwitch)
         val replyAutoFocus = findViewById<Switch>(R.id.customReplyAutoFocusSwitch)
-        val menuShowModSettings = findViewById<Switch>(R.id.customMenuShowModSettingsSwitch)
-        val menuShowDownloads = findViewById<Switch>(R.id.customMenuShowDownloadsSwitch)
         val menuDownloadsPositionTitle = findViewById<TextView>(R.id.customMenuDownloadsPositionTitle)
         val menuDownloadsPositionSpinner = findViewById<Spinner>(R.id.customMenuDownloadsPositionSpinner)
         val menuShowDividers = findViewById<Switch>(R.id.customMenuShowDividersSwitch)
@@ -52,8 +50,6 @@ class CustomizationActivity : AppCompatActivity() {
         dynamicColor.isChecked = runtimePrefs.getBoolean(KeepAliveService.KEY_DYNAMIC_COLOR, false)
         md3HideBasePlates.isChecked = runtimePrefs.getBoolean(KeepAliveService.KEY_MD3_HIDE_BASE_PLATES, false)
         replyAutoFocus.isChecked = runtimePrefs.getBoolean(KeepAliveService.KEY_REPLY_AUTO_FOCUS, true)
-        menuShowModSettings.isChecked = runtimePrefs.getBoolean(KeepAliveService.KEY_MENU_SHOW_MOD_SETTINGS, true)
-        menuShowDownloads.isChecked = runtimePrefs.getBoolean(KeepAliveService.KEY_MENU_SHOW_DOWNLOADS, true)
         menuShowDividers.isChecked = runtimePrefs.getBoolean(KeepAliveService.KEY_MENU_SHOW_DIVIDERS, false)
         menuHideMore.isChecked = runtimePrefs.getBoolean(KeepAliveService.KEY_MENU_HIDE_MORE, true)
 
@@ -95,8 +91,8 @@ class CustomizationActivity : AppCompatActivity() {
         if (selectedDownloadsPosition >= 0) {
             menuDownloadsPositionSpinner.setSelection(selectedDownloadsPosition, false)
         }
-        menuDownloadsPositionTitle.alpha = if (menuShowDownloads.isChecked) 1f else 0.45f
-        menuDownloadsPositionSpinner.isEnabled = menuShowDownloads.isChecked
+        menuDownloadsPositionTitle.alpha = 1f
+        menuDownloadsPositionSpinner.isEnabled = true
 
         md3Effects.setOnCheckedChangeListener { _, value ->
             runtimePrefs.edit()
@@ -138,20 +134,6 @@ class CustomizationActivity : AppCompatActivity() {
             override fun onNothingSelected(parent: AdapterView<*>?) = Unit
         }
 
-        menuShowModSettings.setOnCheckedChangeListener { _, value ->
-            runtimePrefs.edit()
-                .putBoolean(KeepAliveService.KEY_MENU_SHOW_MOD_SETTINGS, value)
-                .apply()
-            markPendingReload()
-        }
-        menuShowDownloads.setOnCheckedChangeListener { _, value ->
-            runtimePrefs.edit()
-                .putBoolean(KeepAliveService.KEY_MENU_SHOW_DOWNLOADS, value)
-                .apply()
-            menuDownloadsPositionTitle.alpha = if (value) 1f else 0.45f
-            menuDownloadsPositionSpinner.isEnabled = value
-            markPendingReload()
-        }
         menuShowDividers.setOnCheckedChangeListener { _, value ->
             runtimePrefs.edit()
                 .putBoolean(KeepAliveService.KEY_MENU_SHOW_DIVIDERS, value)
