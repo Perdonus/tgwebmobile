@@ -22,6 +22,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -126,7 +127,13 @@ private fun Route.registerPushRoutes(pathPrefix: String) {
 
         val body = call.receive<DeviceRegistration>()
         devices[body.deviceId] = body
-        call.respond(HttpStatusCode.OK, mapOf("status" to "registered", "device_id" to body.deviceId))
+        call.respond(
+            HttpStatusCode.OK,
+            buildJsonObject {
+                put("status", JsonPrimitive("registered"))
+                put("device_id", JsonPrimitive(body.deviceId))
+            },
+        )
     }
 
     post("/v1/devices/unregister") {
@@ -134,7 +141,13 @@ private fun Route.registerPushRoutes(pathPrefix: String) {
 
         val body = call.receive<DeviceUnregister>()
         devices.remove(body.deviceId)
-        call.respond(HttpStatusCode.OK, mapOf("status" to "unregistered", "device_id" to body.deviceId))
+        call.respond(
+            HttpStatusCode.OK,
+            buildJsonObject {
+                put("status", JsonPrimitive("unregistered"))
+                put("device_id", JsonPrimitive(body.deviceId))
+            },
+        )
     }
 
     post("/v1/push/ack") {
@@ -143,7 +156,13 @@ private fun Route.registerPushRoutes(pathPrefix: String) {
         val body = call.receive<PushAck>()
         acks[body.messageId] = body
         pushDelivered.incrementAndGet()
-        call.respond(HttpStatusCode.OK, mapOf("status" to "acknowledged", "message_id" to body.messageId))
+        call.respond(
+            HttpStatusCode.OK,
+            buildJsonObject {
+                put("status", JsonPrimitive("acknowledged"))
+                put("message_id", JsonPrimitive(body.messageId))
+            },
+        )
     }
 
     post("/v1/push/metric") {
@@ -160,7 +179,12 @@ private fun Route.registerPushRoutes(pathPrefix: String) {
                 failureReasons.computeIfAbsent(reason) { AtomicLong(0) }.incrementAndGet()
             }
         }
-        call.respond(HttpStatusCode.OK, mapOf("status" to "recorded"))
+        call.respond(
+            HttpStatusCode.OK,
+            buildJsonObject {
+                put("status", JsonPrimitive("recorded"))
+            },
+        )
     }
 
     post("/v1/push/send") {
@@ -171,7 +195,18 @@ private fun Route.registerPushRoutes(pathPrefix: String) {
         if (targets.isEmpty()) {
             call.respond(
                 HttpStatusCode.NotFound,
-                mapOf("status" to "no_targets", "requested_device_ids" to body.deviceIds, "user_id" to body.userId),
+                buildJsonObject {
+                    put("status", JsonPrimitive("no_targets"))
+                    put(
+                        "requested_device_ids",
+                        buildJsonArray {
+                            body.deviceIds.forEach { deviceId ->
+                                add(JsonPrimitive(deviceId))
+                            }
+                        },
+                    )
+                    body.userId?.let { put("user_id", JsonPrimitive(it)) }
+                },
             )
             return@post
         }
@@ -205,42 +240,61 @@ private fun Route.registerPushRoutes(pathPrefix: String) {
 
         call.respond(
             HttpStatusCode.OK,
-            mapOf(
-                "status" to if (failed == 0) "ok" else "partial",
-                "targeted" to targets.size,
-                "sent" to sent,
-                "failed" to failed,
-                "failures" to failures,
-            ),
+            buildJsonObject {
+                put("status", JsonPrimitive(if (failed == 0) "ok" else "partial"))
+                put("targeted", JsonPrimitive(targets.size))
+                put("sent", JsonPrimitive(sent))
+                put("failed", JsonPrimitive(failed))
+                put(
+                    "failures",
+                    buildJsonArray {
+                        failures.forEach { failure ->
+                            add(
+                                buildJsonObject {
+                                    put("device_id", JsonPrimitive(failure["device_id"].orEmpty()))
+                                    put("reason", JsonPrimitive(failure["reason"].orEmpty()))
+                                },
+                            )
+                        }
+                    },
+                )
+            },
         )
     }
 
     get("/v1/push/health") {
         call.respond(
             HttpStatusCode.OK,
-            mapOf(
-                "status" to "ok",
-                "time" to Instant.now().toString(),
-                "base_path" to pathPrefix.ifBlank { "/" },
-                "bind_host" to bindHost,
-                "bind_port" to bindPort,
-                "registered_devices" to devices.size,
-                "acks" to acks.size,
-            ),
+            buildJsonObject {
+                put("status", JsonPrimitive("ok"))
+                put("time", JsonPrimitive(Instant.now().toString()))
+                put("base_path", JsonPrimitive(pathPrefix.ifBlank { "/" }))
+                put("bind_host", JsonPrimitive(bindHost))
+                put("bind_port", JsonPrimitive(bindPort))
+                put("registered_devices", JsonPrimitive(devices.size))
+                put("acks", JsonPrimitive(acks.size))
+            },
         )
     }
 
     get("/v1/push/metrics") {
         call.respond(
             HttpStatusCode.OK,
-            mapOf(
-                "push_sent" to pushSent.get(),
-                "push_delivered" to pushDelivered.get(),
-                "push_opened" to pushOpened.get(),
-                "push_retried" to pushRetried.get(),
-                "push_failed" to pushFailed.get(),
-                "failure_reasons" to failureReasons.mapValues { it.value.get() },
-            ),
+            buildJsonObject {
+                put("push_sent", JsonPrimitive(pushSent.get()))
+                put("push_delivered", JsonPrimitive(pushDelivered.get()))
+                put("push_opened", JsonPrimitive(pushOpened.get()))
+                put("push_retried", JsonPrimitive(pushRetried.get()))
+                put("push_failed", JsonPrimitive(pushFailed.get()))
+                put(
+                    "failure_reasons",
+                    buildJsonObject {
+                        failureReasons.forEach { (reason, count) ->
+                            put(reason, JsonPrimitive(count.get()))
+                        }
+                    },
+                )
+            },
         )
     }
 }
@@ -265,7 +319,12 @@ private suspend fun ApplicationCall.requireAuthorized(): Boolean {
     if (sharedSecret.isBlank()) return true
     val provided = request.headers[HEADER_SHARED_SECRET].orEmpty()
     if (provided == sharedSecret) return true
-    respond(HttpStatusCode.Unauthorized, mapOf("status" to "unauthorized"))
+    respond(
+        HttpStatusCode.Unauthorized,
+        buildJsonObject {
+            put("status", JsonPrimitive("unauthorized"))
+        },
+    )
     return false
 }
 
