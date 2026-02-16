@@ -657,121 +657,506 @@ class MainActivity : ComponentActivity() {
                 });
               };
 
-              var panel = document.createElement('div');
-              panel.style.position = 'fixed';
-              panel.style.right = '14px';
-              panel.style.bottom = '18px';
-              panel.style.zIndex = '2147483646';
-              panel.style.display = 'flex';
-              panel.style.flexDirection = 'column';
-              panel.style.alignItems = 'flex-end';
-              panel.style.gap = '8px';
-
-              var actionBox = document.createElement('div');
-              actionBox.style.display = 'none';
-              actionBox.style.background = 'rgba(17, 27, 39, 0.92)';
-              actionBox.style.border = '1px solid rgba(112, 144, 180, 0.35)';
-              actionBox.style.borderRadius = '12px';
-              actionBox.style.padding = '10px';
-              actionBox.style.backdropFilter = 'blur(8px)';
-              actionBox.style.minWidth = '220px';
-              actionBox.style.color = '#d8e6ff';
-              actionBox.style.fontSize = '13px';
-
-              var header = document.createElement('div');
-              header.textContent = 'Mobile tools';
-              header.style.fontWeight = '700';
-              header.style.marginBottom = '8px';
-              actionBox.appendChild(header);
-
-              var scaleLabel = document.createElement('div');
-              scaleLabel.style.marginBottom = '4px';
-              actionBox.appendChild(scaleLabel);
-
-              var scaleInput = document.createElement('input');
-              scaleInput.type = 'range';
-              scaleInput.min = '75';
-              scaleInput.max = '140';
-              scaleInput.value = String(applyScale(${scale}));
-              scaleInput.style.width = '100%';
-              scaleInput.oninput = function() {
-                var p = applyScale(scaleInput.value);
-                scaleLabel.textContent = 'Scale: ' + p + '%';
-                send('${BridgeCommandTypes.SET_INTERFACE_SCALE}', { scalePercent: String(p) });
-              };
-              actionBox.appendChild(scaleInput);
-              scaleLabel.textContent = 'Scale: ' + scaleInput.value + '%';
-
-              var buttonsWrap = document.createElement('div');
-              buttonsWrap.style.display = 'flex';
-              buttonsWrap.style.flexWrap = 'wrap';
-              buttonsWrap.style.gap = '6px';
-              buttonsWrap.style.marginTop = '10px';
-              actionBox.appendChild(buttonsWrap);
-
-              var makeBtn = function(label, click) {
-                var btn = document.createElement('button');
-                btn.textContent = label;
-                btn.style.background = '#2f6ea3';
-                btn.style.color = 'white';
-                btn.style.border = '0';
-                btn.style.borderRadius = '8px';
-                btn.style.padding = '6px 10px';
-                btn.style.fontSize = '12px';
-                btn.style.cursor = 'pointer';
-                btn.onclick = click;
-                return btn;
+              var modState = {
+                scalePercent: applyScale(${scale}),
+                keepAliveEnabled: ${if (keepAliveEnabled) "true" else "false"},
+                pushGranted: null,
+                proxy: {
+                  enabled: false,
+                  type: 'DIRECT',
+                  host: '',
+                  port: '',
+                  username: '',
+                  password: '',
+                  secret: ''
+                }
               };
 
-              var keepAliveEnabled = ${if (keepAliveEnabled) "true" else "false"};
-              var keepAliveBtn = makeBtn('KeepAlive: ' + (keepAliveEnabled ? 'ON' : 'OFF'), function() {
-                keepAliveEnabled = !keepAliveEnabled;
-                keepAliveBtn.textContent = 'KeepAlive: ' + (keepAliveEnabled ? 'ON' : 'OFF');
-                send('${BridgeCommandTypes.SET_KEEP_ALIVE}', { enabled: String(keepAliveEnabled) });
-              });
-              buttonsWrap.appendChild(keepAliveBtn);
+              var modUi = {
+                overlay: null,
+                scaleInput: null,
+                scaleValue: null,
+                keepAliveInput: null,
+                pushState: null,
+                proxyEnabledInput: null,
+                proxyTypeInput: null,
+                proxyHostInput: null,
+                proxyPortInput: null,
+                proxyUsernameInput: null,
+                proxyPasswordInput: null,
+                proxySecretInput: null,
+                proxyHostWrap: null,
+                proxyCredsWrap: null,
+                proxySecretWrap: null
+              };
 
-              buttonsWrap.appendChild(makeBtn('Push perm', function() {
-                send('${BridgeCommandTypes.REQUEST_PUSH_PERMISSION}', {});
-              }));
+              var normalizeProxyType = function(rawType) {
+                var type = String(rawType || '').trim().toUpperCase();
+                if (type === 'HTTP' || type === 'SOCKS5' || type === 'MTPROTO') {
+                  return type;
+                }
+                return 'DIRECT';
+              };
 
-              buttonsWrap.appendChild(makeBtn('Proxy', function() {
-                var type = (prompt('Proxy type: HTTP / SOCKS5 / MTPROTO / DIRECT', 'SOCKS5') || '').trim().toUpperCase();
-                if (!type || type === 'DIRECT') {
+              var ensureModStyles = function() {
+                if (document.getElementById('tgweb-mod-settings-style')) { return; }
+                var style = document.createElement('style');
+                style.id = 'tgweb-mod-settings-style';
+                style.textContent =
+                  '.tgweb-mod-overlay{position:fixed;inset:0;display:none;align-items:center;justify-content:center;padding:16px;background:rgba(7,10,14,.62);z-index:2147483646}' +
+                  '.tgweb-mod-overlay.is-open{display:flex}' +
+                  '.tgweb-mod-card{width:min(560px,100%);max-height:92vh;overflow:auto;border-radius:14px;border:1px solid rgba(148,170,196,.28);background:var(--surface-color,#17212b);color:var(--primary-text-color,#f4f8ff);box-shadow:0 28px 56px rgba(0,0,0,.44);padding:14px}' +
+                  '.tgweb-mod-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;font-size:17px;font-weight:700}' +
+                  '.tgweb-mod-close{border:0;background:transparent;color:inherit;font-size:24px;line-height:1;cursor:pointer;padding:0 6px}' +
+                  '.tgweb-mod-block{border:1px solid rgba(128,150,176,.24);border-radius:12px;padding:10px;margin-top:10px;background:rgba(20,33,48,.34)}' +
+                  '.tgweb-mod-label{display:block;font-size:13px;font-weight:600;margin-bottom:6px}' +
+                  '.tgweb-mod-input,.tgweb-mod-select{width:100%;box-sizing:border-box;border:1px solid rgba(128,150,176,.35);border-radius:10px;background:rgba(12,24,36,.55);color:inherit;padding:9px 10px;font-size:14px}' +
+                  '.tgweb-mod-range{width:100%}' +
+                  '.tgweb-mod-row{display:flex;align-items:center;gap:10px}' +
+                  '.tgweb-mod-row-between{display:flex;align-items:center;justify-content:space-between;gap:10px}' +
+                  '.tgweb-mod-switch{display:flex;align-items:center;gap:8px;font-size:14px}' +
+                  '.tgweb-mod-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}' +
+                  '.tgweb-mod-btn{border:0;border-radius:10px;padding:9px 12px;font-size:13px;cursor:pointer}' +
+                  '.tgweb-mod-btn-primary{background:#3390ec;color:#fff}' +
+                  '.tgweb-mod-btn-secondary{background:rgba(76,96,120,.3);color:inherit}' +
+                  '.tgweb-mod-info{font-size:12px;opacity:.88;margin-top:6px;line-height:1.35}' +
+                  '.tgweb-mod-settings-row{cursor:pointer}' +
+                  '.tgweb-mod-hidden{display:none!important}';
+                document.head.appendChild(style);
+              };
+
+              var setVisibility = function(element, visible) {
+                if (!element) { return; }
+                element.classList.toggle('tgweb-mod-hidden', !visible);
+              };
+
+              var updateProxyFieldVisibility = function() {
+                if (!modUi.proxyEnabledInput || !modUi.proxyTypeInput) { return; }
+                var enabled = !!modUi.proxyEnabledInput.checked;
+                var type = normalizeProxyType(modUi.proxyTypeInput.value);
+                var needsHost = enabled && type !== 'DIRECT';
+                var creds = needsHost && (type === 'HTTP' || type === 'SOCKS5');
+                var secret = needsHost && type === 'MTPROTO';
+                setVisibility(modUi.proxyHostWrap, needsHost);
+                setVisibility(modUi.proxyCredsWrap, creds);
+                setVisibility(modUi.proxySecretWrap, secret);
+              };
+
+              var renderPushState = function() {
+                if (!modUi.pushState) { return; }
+                if (modState.pushGranted === true) {
+                  modUi.pushState.textContent = 'Push: разрешено';
+                } else if (modState.pushGranted === false) {
+                  modUi.pushState.textContent = 'Push: не разрешено';
+                } else {
+                  modUi.pushState.textContent = 'Push: статус неизвестен';
+                }
+              };
+
+              var syncModalFromState = function() {
+                if (!modUi.overlay) { return; }
+                if (modUi.scaleInput) {
+                  var scalePercent = clamp(Number(modState.scalePercent) || 100, 75, 140);
+                  modUi.scaleInput.value = String(scalePercent);
+                  if (modUi.scaleValue) {
+                    modUi.scaleValue.textContent = 'Масштаб: ' + scalePercent + '%';
+                  }
+                }
+                if (modUi.keepAliveInput) {
+                  modUi.keepAliveInput.checked = !!modState.keepAliveEnabled;
+                }
+                if (modUi.proxyEnabledInput) {
+                  modUi.proxyEnabledInput.checked = !!modState.proxy.enabled;
+                }
+                if (modUi.proxyTypeInput) {
+                  modUi.proxyTypeInput.value = normalizeProxyType(modState.proxy.type);
+                }
+                if (modUi.proxyHostInput) {
+                  modUi.proxyHostInput.value = modState.proxy.host || '';
+                }
+                if (modUi.proxyPortInput) {
+                  modUi.proxyPortInput.value = modState.proxy.port || '';
+                }
+                if (modUi.proxyUsernameInput) {
+                  modUi.proxyUsernameInput.value = modState.proxy.username || '';
+                }
+                if (modUi.proxyPasswordInput) {
+                  modUi.proxyPasswordInput.value = modState.proxy.password || '';
+                }
+                if (modUi.proxySecretInput) {
+                  modUi.proxySecretInput.value = modState.proxy.secret || '';
+                }
+                updateProxyFieldVisibility();
+                renderPushState();
+              };
+
+              var closeModSettings = function() {
+                if (!modUi.overlay) { return; }
+                modUi.overlay.classList.remove('is-open');
+              };
+
+              var buildField = function(labelText, input) {
+                var wrap = document.createElement('div');
+                wrap.style.marginTop = '8px';
+                var label = document.createElement('label');
+                label.className = 'tgweb-mod-label';
+                label.textContent = labelText;
+                wrap.appendChild(label);
+                wrap.appendChild(input);
+                return wrap;
+              };
+
+              var saveModSettings = function() {
+                if (!modUi.overlay) { return; }
+                var scalePercent = clamp(Number(modUi.scaleInput && modUi.scaleInput.value) || 100, 75, 140);
+                modState.scalePercent = applyScale(scalePercent);
+                send('${BridgeCommandTypes.SET_INTERFACE_SCALE}', { scalePercent: String(modState.scalePercent) });
+
+                modState.keepAliveEnabled = !!(modUi.keepAliveInput && modUi.keepAliveInput.checked);
+                send('${BridgeCommandTypes.SET_KEEP_ALIVE}', { enabled: String(modState.keepAliveEnabled) });
+
+                var proxyEnabled = !!(modUi.proxyEnabledInput && modUi.proxyEnabledInput.checked);
+                var proxyType = normalizeProxyType(modUi.proxyTypeInput && modUi.proxyTypeInput.value);
+                if (!proxyEnabled || proxyType === 'DIRECT') {
+                  modState.proxy = {
+                    enabled: false,
+                    type: 'DIRECT',
+                    host: '',
+                    port: '',
+                    username: '',
+                    password: '',
+                    secret: ''
+                  };
                   send('${BridgeCommandTypes.SET_PROXY}', { enabled: 'false' });
+                  closeModSettings();
                   return;
                 }
-                var host = (prompt('Proxy host', '') || '').trim();
-                var port = (prompt('Proxy port', '1080') || '').trim();
-                var payload = { enabled: 'true', type: type, host: host, port: port };
-                if (type === 'MTPROTO') {
-                  payload.secret = (prompt('MTProto secret', '') || '').trim();
-                } else {
-                  payload.username = (prompt('Username (optional)', '') || '').trim();
-                  payload.password = (prompt('Password (optional)', '') || '').trim();
-                }
-                send('${BridgeCommandTypes.SET_PROXY}', payload);
-              }));
 
-              var fab = document.createElement('button');
-              fab.textContent = 'Menu';
-              fab.style.width = '46px';
-              fab.style.height = '46px';
-              fab.style.borderRadius = '12px';
-              fab.style.border = '0';
-              fab.style.background = '#3390ec';
-              fab.style.color = 'white';
-              fab.style.fontSize = '26px';
-              fab.style.lineHeight = '1';
-              fab.style.boxShadow = '0 8px 20px rgba(6, 18, 34, 0.45)';
-              fab.style.cursor = 'pointer';
-              fab.onclick = function() {
-                actionBox.style.display = actionBox.style.display === 'none' ? 'block' : 'none';
+                var host = String(modUi.proxyHostInput && modUi.proxyHostInput.value || '').trim();
+                var port = parseInt(String(modUi.proxyPortInput && modUi.proxyPortInput.value || '').trim(), 10);
+                if (!host || !Number.isFinite(port) || port < 1 || port > 65535) {
+                  alert('Проверь прокси: host и port (1..65535) обязательны.');
+                  return;
+                }
+
+                var payload = {
+                  enabled: 'true',
+                  type: proxyType,
+                  host: host,
+                  port: String(port)
+                };
+
+                var username = String(modUi.proxyUsernameInput && modUi.proxyUsernameInput.value || '').trim();
+                var password = String(modUi.proxyPasswordInput && modUi.proxyPasswordInput.value || '').trim();
+                var secret = String(modUi.proxySecretInput && modUi.proxySecretInput.value || '').trim();
+
+                if (proxyType === 'MTPROTO') {
+                  payload.secret = secret;
+                } else {
+                  payload.username = username;
+                  payload.password = password;
+                }
+
+                modState.proxy = {
+                  enabled: true,
+                  type: proxyType,
+                  host: host,
+                  port: String(port),
+                  username: username,
+                  password: password,
+                  secret: secret
+                };
+
+                send('${BridgeCommandTypes.SET_PROXY}', payload);
+                closeModSettings();
               };
 
-              panel.appendChild(actionBox);
-              panel.appendChild(fab);
-              document.documentElement.appendChild(panel);
+              var ensureModModal = function() {
+                if (modUi.overlay) { return; }
+                ensureModStyles();
+
+                var overlay = document.createElement('div');
+                overlay.className = 'tgweb-mod-overlay';
+
+                var card = document.createElement('div');
+                card.className = 'tgweb-mod-card';
+
+                var header = document.createElement('div');
+                header.className = 'tgweb-mod-header';
+                var title = document.createElement('div');
+                title.textContent = 'Настройки мода';
+                var closeBtn = document.createElement('button');
+                closeBtn.className = 'tgweb-mod-close';
+                closeBtn.type = 'button';
+                closeBtn.textContent = '×';
+                closeBtn.onclick = closeModSettings;
+                header.append(title, closeBtn);
+
+                var scaleBlock = document.createElement('div');
+                scaleBlock.className = 'tgweb-mod-block';
+                var scaleTop = document.createElement('div');
+                scaleTop.className = 'tgweb-mod-row-between';
+                var scaleTitle = document.createElement('div');
+                scaleTitle.textContent = 'Интерфейс';
+                scaleTitle.style.fontWeight = '700';
+                var scaleValue = document.createElement('div');
+                scaleValue.className = 'tgweb-mod-info';
+                scaleTop.append(scaleTitle, scaleValue);
+                var scaleInput = document.createElement('input');
+                scaleInput.type = 'range';
+                scaleInput.min = '75';
+                scaleInput.max = '140';
+                scaleInput.className = 'tgweb-mod-range';
+                scaleInput.oninput = function() {
+                  var p = clamp(Number(scaleInput.value) || 100, 75, 140);
+                  scaleValue.textContent = 'Масштаб: ' + p + '%';
+                  applyScale(p);
+                };
+                scaleBlock.append(scaleTop, scaleInput);
+
+                var keepAliveBlock = document.createElement('div');
+                keepAliveBlock.className = 'tgweb-mod-block';
+                var keepAliveSwitch = document.createElement('label');
+                keepAliveSwitch.className = 'tgweb-mod-switch';
+                var keepAliveInput = document.createElement('input');
+                keepAliveInput.type = 'checkbox';
+                keepAliveSwitch.append(keepAliveInput, document.createTextNode('Keep alive (фон удерживается)'));
+                keepAliveBlock.append(keepAliveSwitch);
+                var pushRow = document.createElement('div');
+                pushRow.className = 'tgweb-mod-row';
+                pushRow.style.marginTop = '10px';
+                var pushBtn = document.createElement('button');
+                pushBtn.className = 'tgweb-mod-btn tgweb-mod-btn-secondary';
+                pushBtn.type = 'button';
+                pushBtn.textContent = 'Разрешение Push';
+                pushBtn.onclick = function() {
+                  send('${BridgeCommandTypes.REQUEST_PUSH_PERMISSION}', {});
+                };
+                var pushState = document.createElement('div');
+                pushState.className = 'tgweb-mod-info';
+                pushRow.append(pushBtn, pushState);
+                keepAliveBlock.appendChild(pushRow);
+
+                var proxyBlock = document.createElement('div');
+                proxyBlock.className = 'tgweb-mod-block';
+                var proxyHeader = document.createElement('div');
+                proxyHeader.className = 'tgweb-mod-row-between';
+                var proxyTitle = document.createElement('div');
+                proxyTitle.textContent = 'Прокси';
+                proxyTitle.style.fontWeight = '700';
+                var proxyEnabledLabel = document.createElement('label');
+                proxyEnabledLabel.className = 'tgweb-mod-switch';
+                var proxyEnabledInput = document.createElement('input');
+                proxyEnabledInput.type = 'checkbox';
+                proxyEnabledLabel.append(proxyEnabledInput, document.createTextNode('Включить'));
+                proxyHeader.append(proxyTitle, proxyEnabledLabel);
+
+                var proxyTypeInput = document.createElement('select');
+                proxyTypeInput.className = 'tgweb-mod-select';
+                ['DIRECT', 'HTTP', 'SOCKS5', 'MTPROTO'].forEach(function(type) {
+                  var option = document.createElement('option');
+                  option.value = type;
+                  option.textContent = type;
+                  proxyTypeInput.appendChild(option);
+                });
+                var proxyTypeWrap = buildField('Тип', proxyTypeInput);
+
+                var proxyHostInput = document.createElement('input');
+                proxyHostInput.type = 'text';
+                proxyHostInput.className = 'tgweb-mod-input';
+                proxyHostInput.placeholder = 'host';
+
+                var proxyPortInput = document.createElement('input');
+                proxyPortInput.type = 'number';
+                proxyPortInput.min = '1';
+                proxyPortInput.max = '65535';
+                proxyPortInput.className = 'tgweb-mod-input';
+                proxyPortInput.placeholder = 'port';
+
+                var proxyHostWrap = document.createElement('div');
+                proxyHostWrap.className = 'tgweb-mod-row';
+                proxyHostWrap.style.marginTop = '8px';
+                var hostGroup = buildField('Host', proxyHostInput);
+                hostGroup.style.flex = '2';
+                hostGroup.style.marginTop = '0';
+                var portGroup = buildField('Port', proxyPortInput);
+                portGroup.style.flex = '1';
+                portGroup.style.marginTop = '0';
+                proxyHostWrap.append(hostGroup, portGroup);
+
+                var proxyUsernameInput = document.createElement('input');
+                proxyUsernameInput.type = 'text';
+                proxyUsernameInput.className = 'tgweb-mod-input';
+                proxyUsernameInput.placeholder = 'username';
+                var proxyPasswordInput = document.createElement('input');
+                proxyPasswordInput.type = 'password';
+                proxyPasswordInput.className = 'tgweb-mod-input';
+                proxyPasswordInput.placeholder = 'password';
+                var proxyCredsWrap = document.createElement('div');
+                proxyCredsWrap.style.marginTop = '8px';
+                proxyCredsWrap.append(
+                  buildField('Логин', proxyUsernameInput),
+                  buildField('Пароль', proxyPasswordInput)
+                );
+
+                var proxySecretInput = document.createElement('input');
+                proxySecretInput.type = 'text';
+                proxySecretInput.className = 'tgweb-mod-input';
+                proxySecretInput.placeholder = 'mtproto secret';
+                var proxySecretWrap = buildField('MTProto secret', proxySecretInput);
+                proxySecretWrap.style.marginTop = '8px';
+
+                proxyBlock.append(proxyHeader, proxyTypeWrap, proxyHostWrap, proxyCredsWrap, proxySecretWrap);
+                var proxyHelp = document.createElement('div');
+                proxyHelp.className = 'tgweb-mod-info';
+                proxyHelp.textContent = 'Поддержка: HTTP, SOCKS5, MTProto.';
+                proxyBlock.appendChild(proxyHelp);
+
+                var actions = document.createElement('div');
+                actions.className = 'tgweb-mod-actions';
+                var cancelBtn = document.createElement('button');
+                cancelBtn.type = 'button';
+                cancelBtn.className = 'tgweb-mod-btn tgweb-mod-btn-secondary';
+                cancelBtn.textContent = 'Отмена';
+                cancelBtn.onclick = closeModSettings;
+                var saveBtn = document.createElement('button');
+                saveBtn.type = 'button';
+                saveBtn.className = 'tgweb-mod-btn tgweb-mod-btn-primary';
+                saveBtn.textContent = 'Сохранить';
+                saveBtn.onclick = saveModSettings;
+                actions.append(cancelBtn, saveBtn);
+
+                card.append(header, scaleBlock, keepAliveBlock, proxyBlock, actions);
+                overlay.appendChild(card);
+                overlay.addEventListener('click', function(e) {
+                  if (e.target === overlay) {
+                    closeModSettings();
+                  }
+                });
+
+                proxyEnabledInput.addEventListener('change', updateProxyFieldVisibility);
+                proxyTypeInput.addEventListener('change', updateProxyFieldVisibility);
+
+                document.documentElement.appendChild(overlay);
+
+                modUi.overlay = overlay;
+                modUi.scaleInput = scaleInput;
+                modUi.scaleValue = scaleValue;
+                modUi.keepAliveInput = keepAliveInput;
+                modUi.pushState = pushState;
+                modUi.proxyEnabledInput = proxyEnabledInput;
+                modUi.proxyTypeInput = proxyTypeInput;
+                modUi.proxyHostInput = proxyHostInput;
+                modUi.proxyPortInput = proxyPortInput;
+                modUi.proxyUsernameInput = proxyUsernameInput;
+                modUi.proxyPasswordInput = proxyPasswordInput;
+                modUi.proxySecretInput = proxySecretInput;
+                modUi.proxyHostWrap = proxyHostWrap;
+                modUi.proxyCredsWrap = proxyCredsWrap;
+                modUi.proxySecretWrap = proxySecretWrap;
+                syncModalFromState();
+              };
+
+              var openModSettings = function() {
+                ensureModModal();
+                syncModalFromState();
+                modUi.overlay.classList.add('is-open');
+              };
+
+              var ensureModSettingsEntry = function() {
+                var buttonsRoot = document.querySelector('.settings-container .profile-buttons');
+                if (!buttonsRoot) { return; }
+                if (buttonsRoot.querySelector('.tgweb-mod-settings-row')) { return; }
+
+                var row = document.createElement('div');
+                row.className = 'row no-subtitle row-with-icon row-with-padding tgweb-mod-settings-row';
+
+                var icon = document.createElement('span');
+                icon.className = 'tgico tgico-settings row-icon';
+                var title = document.createElement('div');
+                title.className = 'row-title';
+                title.textContent = 'Настройки мода';
+                var right = document.createElement('div');
+                right.className = 'row-title row-title-right row-title-right-secondary';
+                right.textContent = 'Android';
+
+                row.append(icon, title, right);
+                row.addEventListener('click', function(e) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  openModSettings();
+                }, {passive: false});
+
+                buttonsRoot.appendChild(row);
+              };
+
+              var closeActiveChat = function() {
+                var btn = document.querySelector('.topbar .sidebar-close-button:not(.hide), .chat-info-container .sidebar-close-button:not(.hide), .sidebar-header .sidebar-close-button:not(.hide)');
+                if (btn && typeof btn.click === 'function') {
+                  btn.click();
+                  return;
+                }
+                var eventOpts = {
+                  key: 'Escape',
+                  code: 'Escape',
+                  keyCode: 27,
+                  which: 27,
+                  bubbles: true
+                };
+                document.dispatchEvent(new KeyboardEvent('keydown', eventOpts));
+                window.dispatchEvent(new KeyboardEvent('keydown', eventOpts));
+                setTimeout(function() {
+                  var leftShown = !!(document.body && document.body.classList.contains('is-left-column-shown'));
+                  if (!leftShown && window.history.length > 1) {
+                    history.back();
+                  }
+                }, 110);
+              };
+
+              var isMediaViewerOpen = function() {
+                return !!document.querySelector('.media-viewer-whole.active, .media-viewer-whole, .media-viewer, .media-viewer-movers, [class*="media-viewer"]');
+              };
+
+              var swipeMedia = function(next) {
+                var key = next ? 'ArrowRight' : 'ArrowLeft';
+                var keyCode = next ? 39 : 37;
+                var keyboardEvent = new KeyboardEvent('keydown', {
+                  key: key,
+                  code: key,
+                  keyCode: keyCode,
+                  which: keyCode,
+                  bubbles: true
+                });
+                document.dispatchEvent(keyboardEvent);
+                window.dispatchEvent(keyboardEvent);
+              };
+
+              window.addEventListener('tgweb-native', function(event) {
+                var detail = event && event.detail ? event.detail : null;
+                if (!detail || !detail.type) { return; }
+                var payload = detail.payload || {};
+                if (detail.type === 'PROXY_STATE') {
+                  var normalizedType = normalizeProxyType(payload.type);
+                  modState.proxy.enabled = String(payload.enabled).toLowerCase() === 'true';
+                  modState.proxy.type = normalizedType;
+                  modState.proxy.host = payload.host || '';
+                  modState.proxy.port = payload.port || '';
+                  modState.proxy.username = payload.username || '';
+                  modState.proxy.secret = payload.secret || '';
+                } else if (detail.type === 'KEEP_ALIVE_STATE') {
+                  modState.keepAliveEnabled = String(payload.enabled).toLowerCase() === 'true';
+                } else if (detail.type === 'INTERFACE_SCALE_STATE') {
+                  var scalePercent = clamp(Number(payload.scalePercent) || modState.scalePercent, 75, 140);
+                  modState.scalePercent = applyScale(scalePercent);
+                } else if (detail.type === 'PUSH_PERMISSION_STATE') {
+                  modState.pushGranted = String(payload.granted).toLowerCase() === 'true';
+                }
+
+                if (modUi.overlay && modUi.overlay.classList.contains('is-open')) {
+                  syncModalFromState();
+                }
+                ensureModSettingsEntry();
+              });
 
               var startX = 0, startY = 0, startTs = 0;
               document.addEventListener('touchstart', function(e) {
@@ -821,24 +1206,24 @@ class MainActivity : ComponentActivity() {
                 var dy = e.changedTouches[0].clientY - startY;
                 var dt = Date.now() - startTs;
                 if (dt > 900) { return; }
-                if (Math.abs(dx) < 72 || Math.abs(dx) < Math.abs(dy) * 1.15) { return; }
+                if (Math.abs(dx) < 56 || Math.abs(dx) < Math.abs(dy) * 1.1) { return; }
 
-                if (startX < 24 && dx > 0) {
-                  history.back();
+                if (startX <= 28 && dx > 56) {
+                  closeActiveChat();
                   return;
                 }
 
-                var mediaOpen = !!document.querySelector('[class*="media"][class*="viewer"], [class*="MediaViewer"], [aria-label*="media"], [aria-label*="Media"]');
-                if (mediaOpen) {
-                  var key = dx < 0 ? 'ArrowRight' : 'ArrowLeft';
-                  window.dispatchEvent(new KeyboardEvent('keydown', { key: key, bubbles: true }));
+                if (isMediaViewerOpen()) {
+                  swipeMedia(dx < 0);
                 }
               }, { passive: true });
 
               removeSwitchLinks();
               syncSystemBars();
+              ensureModSettingsEntry();
               setInterval(removeSwitchLinks, 2200);
               setInterval(syncSystemBars, 2000);
+              setInterval(ensureModSettingsEntry, 1200);
 
               send('${BridgeCommandTypes.GET_PROXY_STATUS}', {});
               send('${BridgeCommandTypes.GET_KEEP_ALIVE_STATE}', {});
