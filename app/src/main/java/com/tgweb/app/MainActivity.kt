@@ -40,6 +40,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import androidx.core.graphics.ColorUtils
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.webkit.ProxyConfig
@@ -864,8 +865,10 @@ class MainActivity : ComponentActivity() {
     private fun applySystemUiStyle(payload: Map<String, String>) {
         val statusColor = parseHexColor(payload["statusBarColor"]) ?: Color.parseColor("#0E1621")
         val navColor = parseHexColor(payload["navBarColor"]) ?: statusColor
-        val lightStatusIcons = payload["lightStatusIcons"].toBooleanSafe(defaultValue = false)
-        val lightNavIcons = payload["lightNavIcons"].toBooleanSafe(defaultValue = false)
+        val payloadStatusIcons = payload["lightStatusIcons"].toBooleanSafe(defaultValue = false)
+        val payloadNavIcons = payload["lightNavIcons"].toBooleanSafe(defaultValue = false)
+        val lightStatusIcons = payloadStatusIcons || ColorUtils.calculateLuminance(statusColor) > 0.62
+        val lightNavIcons = payloadNavIcons || ColorUtils.calculateLuminance(navColor) > 0.62
 
         runtimePrefs.edit()
             .putString(KeepAliveService.KEY_STATUS_BAR_COLOR, colorToHex(statusColor))
