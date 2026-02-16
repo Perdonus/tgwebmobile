@@ -318,6 +318,10 @@ class MainApplication : Application() {
             editor.putString(KeepAliveService.KEY_MENU_DOWNLOADS_POSITION, "end")
             changed = true
         }
+        if (!prefs.contains(KeepAliveService.KEY_REPLY_AUTO_FOCUS)) {
+            editor.putBoolean(KeepAliveService.KEY_REPLY_AUTO_FOCUS, true)
+            changed = true
+        }
         if (!prefs.contains(KeepAliveService.KEY_UI_SCALE_PERCENT)) {
             editor.putInt(KeepAliveService.KEY_UI_SCALE_PERCENT, 100)
             changed = true

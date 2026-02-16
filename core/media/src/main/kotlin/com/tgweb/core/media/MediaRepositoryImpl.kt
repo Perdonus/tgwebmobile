@@ -12,12 +12,19 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.tgweb.core.data.AppRepositories
 import com.tgweb.core.data.MediaRepository
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.io.File
 import java.io.RandomAccessFile
 import java.net.HttpURLConnection
 import java.net.InetSocketAddress
 import java.net.Proxy
 import java.net.URL
+import java.util.zip.ZipFile
 
 class MediaRepositoryImpl(
     private val context: Context,
@@ -36,6 +43,7 @@ class MediaRepositoryImpl(
         var mimeType: String,
         var fileName: String?,
         val ranges: MutableList<LongRange>,
+        var updatedAt: Long,
     )
 
     private data class SegmentSnapshot(
@@ -238,6 +246,7 @@ class MediaRepositoryImpl(
 
     override suspend fun removeCachedFile(fileId: String): Boolean {
         synchronized(segmentLock) {
+            segmentFinalizeJobs.remove(fileId)?.cancel()
             segmentStates.remove(fileId)?.tempFile?.delete()
         }
         return cacheManager.remove(fileId)
@@ -246,6 +255,8 @@ class MediaRepositoryImpl(
     override suspend fun clearCache(scope: String) {
         if (scope == "all" || scope == "media") {
             synchronized(segmentLock) {
+                segmentFinalizeJobs.values.forEach { it.cancel() }
+                segmentFinalizeJobs.clear()
                 segmentStates.values.forEach { it.tempFile.delete() }
                 segmentStates.clear()
             }
@@ -286,6 +297,7 @@ class MediaRepositoryImpl(
                     mimeType = mimeType,
                     fileName = fileName,
                     ranges = mutableListOf(),
+                    updatedAt = System.currentTimeMillis(),
                 ).also { segmentStates[fileId] = it }
             }
         }
@@ -312,9 +324,7 @@ class MediaRepositoryImpl(
             if (state.totalBytes <= 0L && totalHint != null && totalHint > 0L) {
                 state.totalBytes = totalHint
             }
-            if (state.totalBytes <= 0L && contentLength > 0L && startOffset == 0L) {
-                state.totalBytes = contentLength
-            }
+            state.updatedAt = System.currentTimeMillis()
 
             val covered = coveredBytes(state.ranges)
             val total = state.totalBytes
@@ -334,20 +344,7 @@ class MediaRepositoryImpl(
         }
 
         if (snapshot.complete) {
-            val finalPath = snapshot.tempFile.inputStream().use { input ->
-                cacheManager.cache(
-                    fileId = fileId,
-                    mimeType = snapshot.mimeType,
-                    bytes = snapshot.totalBytes.coerceAtLeast(snapshot.coveredBytes),
-                    source = input,
-                    isPinned = false,
-                    fileName = snapshot.fileName,
-                    onProgress = null,
-                )
-            }
-            synchronized(segmentLock) {
-                segmentStates.remove(fileId)?.tempFile?.delete()
-            }
+            val finalPath = persistSegmentSnapshot(fileId, snapshot)
             AppRepositories.postDownloadProgress(fileId = fileId, percent = 100, localUri = finalPath)
             showDownloadNotification(fileId, snapshot.fileName ?: fileId, 100, inProgress = false)
             return finalPath
@@ -360,6 +357,7 @@ class MediaRepositoryImpl(
         }
         AppRepositories.postDownloadProgress(fileId = fileId, percent = percent)
         showDownloadNotification(fileId, snapshot.fileName ?: fileId, percent, inProgress = true)
+        scheduleSegmentFinalize(fileId)
         return SEGMENT_PENDING_TOKEN
     }
 
@@ -380,6 +378,105 @@ class MediaRepositoryImpl(
 
     private fun coveredBytes(ranges: List<LongRange>): Long {
         return ranges.sumOf { range -> (range.last - range.first + 1L).coerceAtLeast(0L) }
+    }
+
+    private fun scheduleSegmentFinalize(fileId: String) {
+        synchronized(segmentLock) {
+            segmentFinalizeJobs.remove(fileId)?.cancel()
+            segmentFinalizeJobs[fileId] = segmentScope.launch {
+                delay(SEGMENT_IDLE_FINALIZE_MS)
+                val snapshot = synchronized(segmentLock) {
+                    val state = segmentStates[fileId] ?: return@launch
+                    val idleFor = System.currentTimeMillis() - state.updatedAt
+                    if (idleFor < SEGMENT_IDLE_FINALIZE_MS) return@launch
+                    val covered = coveredBytes(state.ranges)
+                    if (covered <= 0L) return@launch
+                    SegmentSnapshot(
+                        tempFile = state.tempFile,
+                        totalBytes = state.totalBytes,
+                        coveredBytes = covered,
+                        mimeType = state.mimeType,
+                        fileName = state.fileName,
+                        complete = state.totalBytes > 0L && covered >= state.totalBytes,
+                    )
+                }
+
+                val bytesHint = snapshot.totalBytes.takeIf { it > 0L } ?: snapshot.coveredBytes
+                runCatching {
+                    persistSegmentSnapshot(fileId, snapshot.copy(totalBytes = bytesHint, complete = true))
+                }.onSuccess { finalPath ->
+                    AppRepositories.postDownloadProgress(fileId = fileId, percent = 100, localUri = finalPath)
+                    showDownloadNotification(fileId, snapshot.fileName ?: fileId, 100, inProgress = false)
+                }.onFailure {
+                    AppRepositories.postDownloadProgress(fileId = fileId, percent = 0, error = "segment_finalize_failed")
+                    showDownloadNotification(fileId, snapshot.fileName ?: fileId, 0, inProgress = false, failed = true)
+                }
+            }
+        }
+    }
+
+    private suspend fun persistSegmentSnapshot(fileId: String, snapshot: SegmentSnapshot): String {
+        val zipCandidate = snapshot.tempFile.takeIf { isLikelyZipFile(it) }
+        val finalPath = if (zipCandidate != null) {
+            runCatching { cacheZipSingleEntry(fileId, zipCandidate, snapshot) }.getOrElse {
+                cacheRawSegment(fileId, snapshot)
+            }
+        } else {
+            cacheRawSegment(fileId, snapshot)
+        }
+
+        synchronized(segmentLock) {
+            segmentFinalizeJobs.remove(fileId)?.cancel()
+            segmentStates.remove(fileId)?.tempFile?.delete()
+        }
+        return finalPath
+    }
+
+    private suspend fun cacheZipSingleEntry(fileId: String, zipFile: File, snapshot: SegmentSnapshot): String {
+        ZipFile(zipFile).use { archive ->
+            val entry = archive.entries().asSequence().firstOrNull { !it.isDirectory }
+                ?: return cacheRawSegment(fileId, snapshot)
+            val entryName = chooseFileName(
+                provided = snapshot.fileName,
+                detected = entry.name.substringAfterLast('/'),
+            )
+            archive.getInputStream(entry).use { input ->
+                return cacheManager.cache(
+                    fileId = fileId,
+                    mimeType = snapshot.mimeType,
+                    bytes = entry.size.takeIf { it > 0L } ?: snapshot.coveredBytes,
+                    source = input,
+                    isPinned = false,
+                    fileName = entryName,
+                    onProgress = null,
+                )
+            }
+        }
+    }
+
+    private suspend fun cacheRawSegment(fileId: String, snapshot: SegmentSnapshot): String {
+        return snapshot.tempFile.inputStream().use { input ->
+            cacheManager.cache(
+                fileId = fileId,
+                mimeType = snapshot.mimeType,
+                bytes = snapshot.totalBytes.coerceAtLeast(snapshot.coveredBytes),
+                source = input,
+                isPinned = false,
+                fileName = snapshot.fileName,
+                onProgress = null,
+            )
+        }
+    }
+
+    private fun isLikelyZipFile(file: File): Boolean {
+        if (!file.exists() || file.length() < 4) return false
+        return runCatching {
+            file.inputStream().use { input ->
+                val signature = ByteArray(4)
+                val read = input.read(signature)
+                read == 4 && signature[0] == 'P'.code.toByte() && signature[1] == 'K'.code.toByte()
+            }
+        }.getOrDefault(false)
     }
 
     private fun parseContentRange(raw: String?): ContentRangeInfo? {
@@ -547,10 +644,13 @@ class MediaRepositoryImpl(
         private const val MAX_HTML_SNIFF = 128 * 1024
         private const val DOWNLOAD_CHANNEL_ID = "flygram_downloads"
         private const val MIN_VALID_FILE_SIZE = 2048L
+        private const val SEGMENT_IDLE_FINALIZE_MS = 2_600L
         private const val SEGMENT_PENDING_TOKEN = "__segment_pending__"
         private val SEGMENT_QUERY_KEYS = setOf("offset", "range", "start", "end", "part", "chunk", "segment")
     }
 
     private val segmentLock = Any()
     private val segmentStates = mutableMapOf<String, SegmentAccumulator>()
+    private val segmentFinalizeJobs = mutableMapOf<String, Job>()
+    private val segmentScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 }

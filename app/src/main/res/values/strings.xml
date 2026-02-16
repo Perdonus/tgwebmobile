@@ -98,6 +98,7 @@
     <string name="custom_md3_effects">MD3-эффекты (скругления и контейнеры)</string>
     <string name="custom_md3_hide_base_plates">Скрывать базовые плашки под MD3 (экспериментально)</string>
     <string name="custom_dynamic_color">Динамический цвет Android</string>
+    <string name="custom_reply_auto_focus">Автофокус ввода при ответе на сообщение</string>
     <string name="custom_container_style">Стиль MD3-контейнеров</string>
     <string name="custom_container_style_segmented">Сегменты</string>
     <string name="custom_container_style_dividers">Разделители</string>

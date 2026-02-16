@@ -72,14 +72,6 @@ class StubTdLibGateway : TdLibGateway {
 
     override suspend fun synchronize(reason: String) {
         delay(50)
-        incomingMessages.tryEmit(
-            IncomingMessageEvent(
-                messageId = System.currentTimeMillis(),
-                chatId = 1001L,
-                senderUserId = 2L,
-                text = "Sync ping: $reason",
-                createdAt = System.currentTimeMillis(),
-            )
-        )
+        // Stub sync should not emit noisy synthetic chat notifications.
     }
 }

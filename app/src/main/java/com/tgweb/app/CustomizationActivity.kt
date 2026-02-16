@@ -40,6 +40,7 @@ class CustomizationActivity : AppCompatActivity() {
         val containerStyleSpinner = findViewById<Spinner>(R.id.customContainerStyleSpinner)
         val md3HideBasePlates = findViewById<Switch>(R.id.customMd3HideBasePlatesSwitch)
         val dynamicColor = findViewById<Switch>(R.id.customDynamicColorSwitch)
+        val replyAutoFocus = findViewById<Switch>(R.id.customReplyAutoFocusSwitch)
         val menuShowModSettings = findViewById<Switch>(R.id.customMenuShowModSettingsSwitch)
         val menuShowDownloads = findViewById<Switch>(R.id.customMenuShowDownloadsSwitch)
         val menuDownloadsPositionTitle = findViewById<TextView>(R.id.customMenuDownloadsPositionTitle)
@@ -50,6 +51,7 @@ class CustomizationActivity : AppCompatActivity() {
         md3Effects.isChecked = runtimePrefs.getBoolean(KeepAliveService.KEY_MD3_EFFECTS, true)
         dynamicColor.isChecked = runtimePrefs.getBoolean(KeepAliveService.KEY_DYNAMIC_COLOR, false)
         md3HideBasePlates.isChecked = runtimePrefs.getBoolean(KeepAliveService.KEY_MD3_HIDE_BASE_PLATES, false)
+        replyAutoFocus.isChecked = runtimePrefs.getBoolean(KeepAliveService.KEY_REPLY_AUTO_FOCUS, true)
         menuShowModSettings.isChecked = runtimePrefs.getBoolean(KeepAliveService.KEY_MENU_SHOW_MOD_SETTINGS, true)
         menuShowDownloads.isChecked = runtimePrefs.getBoolean(KeepAliveService.KEY_MENU_SHOW_DOWNLOADS, true)
         menuShowDividers.isChecked = runtimePrefs.getBoolean(KeepAliveService.KEY_MENU_SHOW_DIVIDERS, false)
@@ -109,6 +111,12 @@ class CustomizationActivity : AppCompatActivity() {
         dynamicColor.setOnCheckedChangeListener { _, value ->
             runtimePrefs.edit()
                 .putBoolean(KeepAliveService.KEY_DYNAMIC_COLOR, value)
+                .apply()
+            markPendingReload()
+        }
+        replyAutoFocus.setOnCheckedChangeListener { _, value ->
+            runtimePrefs.edit()
+                .putBoolean(KeepAliveService.KEY_REPLY_AUTO_FOCUS, value)
                 .apply()
             markPendingReload()
         }

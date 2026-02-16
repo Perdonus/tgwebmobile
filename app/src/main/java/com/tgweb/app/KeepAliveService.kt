@@ -81,6 +81,7 @@ class KeepAliveService : Service() {
         const val KEY_MENU_SHOW_MOD_SETTINGS = "menu_show_mod_settings"
         const val KEY_MENU_SHOW_DIVIDERS = "menu_show_dividers"
         const val KEY_MENU_DOWNLOADS_POSITION = "menu_downloads_position"
+        const val KEY_REPLY_AUTO_FOCUS = "reply_auto_focus"
         const val KEY_PENDING_WEB_RELOAD = "pending_web_reload"
 
         private const val CHANNEL_ID = "tgweb_keep_alive"

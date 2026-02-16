@@ -410,8 +410,9 @@ class MainActivity : ComponentActivity() {
                 return@setDownloadListener
             }
 
-            val fileName = URLUtil.guessFileName(url, contentDisposition, mimeType)
-            val stableFileId = buildStableDownloadFileId(url, fileName)
+            val guessedFileName = URLUtil.guessFileName(url, contentDisposition, mimeType)
+            val displayFileName = resolveDownloadDisplayName(url, guessedFileName, mimeType)
+            val stableFileId = buildStableDownloadFileId(url, displayFileName)
             AppRepositories.webBridge.onFromWeb(
                 BridgeCommand(
                     type = BridgeCommandTypes.DOWNLOAD_MEDIA,
@@ -419,7 +420,7 @@ class MainActivity : ComponentActivity() {
                         "fileId" to stableFileId,
                         "url" to url,
                         "mime" to (mimeType ?: "application/octet-stream"),
-                        "name" to fileName,
+                        "name" to displayFileName,
                         "contentDisposition" to (contentDisposition ?: ""),
                         "export" to "false",
                         "targetCollection" to "flygram_downloads",
@@ -873,12 +874,22 @@ class MainActivity : ComponentActivity() {
         if (uri.scheme.equals("blob", ignoreCase = true)) {
             return "blob_${fileName.hashCode()}"
         }
-        val ignoredParams = setOf("offset", "range", "start", "end", "part", "chunk", "segment")
+        val ignoredParams = setOf(
+            "offset", "range", "start", "end", "part", "chunk", "segment",
+            "range_start", "range_end", "from", "to",
+        )
+        val pathTail = uri.lastPathSegment.orEmpty()
+        val segmentLikePath = isLikelySegmentFileName(pathTail)
+        val segmentLikeName = isLikelySegmentFileName(fileName)
+        val hasSegmentParams = uri.queryParameterNames.any { ignoredParams.contains(it.lowercase()) }
+        val segmentLike = segmentLikePath || segmentLikeName || hasSegmentParams
         val normalized = buildString {
             append(uri.scheme.orEmpty())
             append("://")
             append(uri.host.orEmpty())
-            append(uri.path.orEmpty())
+            if (!segmentLikePath) {
+                append(uri.path.orEmpty())
+            }
             if (uri.queryParameterNames.isNotEmpty()) {
                 val query = uri.queryParameterNames
                     .sorted()
@@ -893,7 +904,50 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-        return "${normalized.hashCode()}_${fileName.hashCode()}"
+        return if (segmentLike) {
+            "${normalized.hashCode()}_seg"
+        } else {
+            "${normalized.hashCode()}_${fileName.hashCode()}"
+        }
+    }
+
+    private fun resolveDownloadDisplayName(url: String, guessedFileName: String, mimeType: String?): String {
+        val uri = runCatching { Uri.parse(url) }.getOrNull()
+        if (uri == null) return guessedFileName
+        val candidates = listOf(
+            "file_name", "filename", "name", "download_name", "download", "title",
+        )
+        val fromQuery = candidates.firstNotNullOfOrNull { key ->
+            uri.getQueryParameter(key)?.trim()?.takeIf { it.isNotBlank() }
+        }
+        val guessed = guessedFileName.trim()
+        val segmentLikeGuessed = isLikelySegmentFileName(guessed)
+        if (!fromQuery.isNullOrBlank()) {
+            return sanitizeDownloadName(fromQuery, mimeType)
+        }
+        return if (segmentLikeGuessed) sanitizeDownloadName("download", mimeType) else guessed
+    }
+
+    private fun sanitizeDownloadName(base: String, mimeType: String?): String {
+        val cleaned = base.replace(Regex("[\\\\/:*?\"<>|]"), "_").trim().ifBlank { "download" }
+        if (cleaned.contains('.')) return cleaned
+        val ext = when (mimeType?.substringBefore(';')?.trim()?.lowercase()) {
+            "application/zip" -> "zip"
+            "application/pdf" -> "pdf"
+            "audio/mpeg" -> "mp3"
+            "video/mp4" -> "mp4"
+            "image/jpeg" -> "jpg"
+            "image/png" -> "png"
+            else -> "bin"
+        }
+        return "$cleaned.$ext"
+    }
+
+    private fun isLikelySegmentFileName(name: String): Boolean {
+        val normalized = name.trim().substringAfterLast('/').lowercase()
+        if (normalized.isBlank()) return false
+        return Regex("^[0-9a-f]{6,}\\.(zip|bin|tmp|dat|part)$").matches(normalized) ||
+            Regex("^part[_-]?[0-9]+\\.(zip|bin|tmp|dat)$").matches(normalized)
     }
 
     private fun buildAuthLogoDataUri(): String {
@@ -1122,6 +1176,7 @@ class MainActivity : ComponentActivity() {
         val menuDownloadsPosition = runtimePrefs
             .getString(KeepAliveService.KEY_MENU_DOWNLOADS_POSITION, "end")
             .orEmpty()
+        val replyAutoFocus = runtimePrefs.getBoolean(KeepAliveService.KEY_REPLY_AUTO_FOCUS, true)
         val authLogoQuoted = JSONObject.quote(authLogoDataUri)
         val md3Accent = if (dynamicColor) {
             colorToHex(UiThemeBridge.readDynamicSurfaceColor(this))
@@ -1139,11 +1194,13 @@ class MainActivity : ComponentActivity() {
                 md3Accent: '${md3Accent}',
                 containerStyle: '${md3ContainerStyle}',
                 md3HideBasePlates: ${if (md3HideBasePlates) "true" else "false"},
+                dynamicColor: ${if (dynamicColor) "true" else "false"},
                 menuHideMore: ${if (menuHideMore) "true" else "false"},
                 menuShowDownloads: ${if (menuShowDownloads) "true" else "false"},
                 menuShowModSettings: ${if (menuShowModSettings) "true" else "false"},
                 menuShowDividers: ${if (menuShowDividers) "true" else "false"},
-                menuDownloadsPosition: '${menuDownloadsPosition}'
+                menuDownloadsPosition: '${menuDownloadsPosition}',
+                replyAutoFocus: ${if (replyAutoFocus) "true" else "false"}
               };
               var flygramAuthLogo = $authLogoQuoted;
               var flygramAuthSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160" viewBox="0 0 160 160" aria-label="FlyGram Logo">' +
@@ -1482,9 +1539,16 @@ class MainActivity : ComponentActivity() {
                 var dividerRowsCss = isDividers
                   ? '.settings-container .row + .row,.btn-menu .btn-menu-item + .btn-menu-item,.menu-item + .menu-item,.profile-buttons .row + .row{border-top:1px solid var(--flygram-divider) !important;}'
                   : '';
+                var primaryButtonBg = custom.dynamicColor
+                  ? 'linear-gradient(135deg, var(--flygram-accent), ' + blendHex(accentColor, '#ffffff', 0.20) + ')'
+                  : 'var(--primary-color, #3390ec)';
+                var primaryButtonText = custom.dynamicColor
+                  ? '#fff'
+                  : 'var(--primary-text-color, #fff)';
                 var groupsCssBlock = groupsCss
                   ? '.settings-container .profile-buttons,.settings-container .list,.settings-container .sections,' +
-                    '.settings-container .content,.btn-menu .btn-menu-items,.btn-menu{' +
+                    '.settings-container .content,.btn-menu .btn-menu-items,.btn-menu,.popup .btn-menu-items,' +
+                    '.menu,.left-sidebar .btn-menu-items,.profile-content .profile-buttons{' +
                       groupsCss +
                     '}'
                   : '';
@@ -1513,10 +1577,31 @@ class MainActivity : ComponentActivity() {
                   '}' +
                   groupsCssBlock +
                   '.settings-container .row,.settings-content .row,.profile-buttons .row,' +
-                  '.btn-menu .btn-menu-item,.menu-item,.row.no-subtitle{' +
+                  '.btn-menu .btn-menu-item,.popup .btn-menu-item,.menu-item,.row.no-subtitle,' +
+                  '.left-sidebar .btn-menu-item,.profile-content .row,[class*=\"btn-menu-item\"]{' +
                     rowCss +
                     rowBgCss +
                     'color:var(--flygram-text) !important;' +
+                  '}' +
+                  '.btn-menu,.popup{' +
+                    'max-width:min(92vw, 360px) !important;' +
+                    'width:fit-content !important;' +
+                    'margin-inline:10px !important;' +
+                  '}' +
+                  '.btn-menu .btn-menu-item,.popup .btn-menu-item,.menu-item{' +
+                    'min-height:40px !important;' +
+                    'padding-top:8px !important;' +
+                    'padding-bottom:8px !important;' +
+                  '}' +
+                  '.btn-menu .btn-menu-items,.popup .btn-menu-items{' +
+                    'padding-top:4px !important;' +
+                    'padding-bottom:4px !important;' +
+                  '}' +
+                  '[dir=\"ltr\"] .btn-menu,[dir=\"ltr\"] .popup{' +
+                    'right:10px !important;' +
+                  '}' +
+                  '[dir=\"rtl\"] .btn-menu,[dir=\"rtl\"] .popup{' +
+                    'left:10px !important;' +
                   '}' +
                   '.settings-container .row-title,.settings-container .row-subtitle,' +
                   '.btn-menu-item-text,.btn-menu-item-auxiliary-text,.subtitle,.description{' +
@@ -1528,8 +1613,8 @@ class MainActivity : ComponentActivity() {
                   '.btn-primary,.btn-primary-transparent,.tgweb-auth-import-actions button{' +
                     'border-radius:12px !important;' +
                     'border:0 !important;' +
-                    'background:linear-gradient(135deg, var(--flygram-accent), ' + blendHex(accentColor, '#ffffff', 0.20) + ') !important;' +
-                    'color:#fff !important;' +
+                    'background:' + primaryButtonBg + ' !important;' +
+                    'color:' + primaryButtonText + ' !important;' +
                   '}' +
                   dividerRowsCss +
                   '.popup,.chat-info,.media-viewer{' +
@@ -2099,6 +2184,14 @@ class MainActivity : ComponentActivity() {
                 ));
               };
 
+              var lastManualInputFocusTs = 0;
+              var markManualInputFocus = function(target) {
+                if (!target || !target.closest) { return; }
+                if (target.closest('.chat-input .input-message-input,textarea,[contenteditable=\"true\"]')) {
+                  lastManualInputFocusTs = Date.now();
+                }
+              };
+
               var lastTapTs = 0;
               var lastTapX = 0;
               var lastTapY = 0;
@@ -2110,6 +2203,7 @@ class MainActivity : ComponentActivity() {
 
               document.addEventListener('touchstart', function(e) {
                 if (!e.touches || e.touches.length !== 1) { return; }
+                markManualInputFocus(e.target);
                 touchStartX = e.touches[0].clientX;
                 touchStartY = e.touches[0].clientY;
                 touchStartTs = Date.now();
@@ -2123,6 +2217,28 @@ class MainActivity : ComponentActivity() {
                   edgeGestureIntent = 'open-menu';
                 }
               }, { passive: false, capture: true });
+
+              document.addEventListener('pointerdown', function(e) {
+                markManualInputFocus(e && e.target);
+              }, true);
+              document.addEventListener('click', function(e) {
+                markManualInputFocus(e && e.target);
+              }, true);
+
+              setInterval(function() {
+                if (custom.replyAutoFocus) { return; }
+                var replyVisible = !!document.querySelector(
+                  '.reply-wrapper,.input-message-reply,[class*=\"reply\"] .reply-title,[class*=\"reply\"] .reply'
+                );
+                if (!replyVisible) { return; }
+                var active = document.activeElement;
+                if (!active || !active.matches) { return; }
+                if (!active.matches('.chat-input .input-message-input,textarea,[contenteditable=\"true\"]')) { return; }
+                if ((Date.now() - lastManualInputFocusTs) < 1800) { return; }
+                if (typeof active.blur === 'function') {
+                  active.blur();
+                }
+              }, 300);
 
               document.addEventListener('touchmove', function(e) {
                 if (!e.touches || e.touches.length !== 1) { return; }
