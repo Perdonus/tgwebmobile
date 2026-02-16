@@ -10,6 +10,9 @@ android {
     defaultConfig {
         minSdk = 28
         consumerProguardFiles("consumer-rules.pro")
+        buildConfigField("String", "DEFAULT_PUSH_BACKEND_URL", "\"https://sosiskibot.ru/flygram/push\"")
+        buildConfigField("String", "DEFAULT_PUSH_BACKEND_FALLBACK_URL", "\"http://91.233.168.135:8081/flygram/push\"")
+        buildConfigField("String", "PUSH_SHARED_SECRET", "\"flygram_push_2026\"")
     }
 
     compileOptions {
@@ -19,6 +22,10 @@ android {
 
     kotlinOptions {
         jvmTarget = "17"
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 }
 

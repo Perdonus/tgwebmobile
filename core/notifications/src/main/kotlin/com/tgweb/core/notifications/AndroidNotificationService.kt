@@ -30,16 +30,27 @@ class AndroidNotificationService(
         secureId ?: UUID.randomUUID().toString()
     }
 
-    private val backendBaseUrl: String by lazy {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+    private val backendBaseUrls: List<String> by lazy {
+        val override = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .getString(KEY_BACKEND_BASE_URL, null)
             ?.trim()
             ?.trimEnd('/')
             .orEmpty()
+        val urls = linkedSetOf<String>()
+        if (override.isNotBlank()) {
+            urls += override
+        } else {
+            urls += BuildConfig.DEFAULT_PUSH_BACKEND_URL.trim().trimEnd('/')
+            val fallback = BuildConfig.DEFAULT_PUSH_BACKEND_FALLBACK_URL.trim().trimEnd('/')
+            if (fallback.isNotBlank()) {
+                urls += fallback
+            }
+        }
+        urls.filter { it.isNotBlank() }
     }
 
     override suspend fun registerDeviceToken(fcmToken: String) {
-        if (backendBaseUrl.isBlank()) return
+        if (backendBaseUrls.isEmpty()) return
         val appVersion = runCatching {
             context.packageManager.getPackageInfo(context.packageName, 0).versionName
         }.getOrDefault("unknown")
@@ -52,7 +63,7 @@ class AndroidNotificationService(
             .put("capabilities", listOf("webk", "offline_r1", "proxy", "background_push"))
             .toString()
 
-        postJson("$backendBaseUrl/v1/devices/register", body)
+        postJson(path = "/v1/devices/register", body = body)
     }
 
     override suspend fun handlePush(payload: Map<String, String>) {
@@ -108,26 +119,38 @@ class AndroidNotificationService(
     }
 
     private suspend fun sendAck(messageId: String) {
-        if (backendBaseUrl.isBlank()) return
+        if (backendBaseUrls.isEmpty()) return
         val body = JSONObject()
             .put("deviceId", deviceId)
             .put("messageId", messageId)
             .put("deliveredAtEpochMs", System.currentTimeMillis())
             .toString()
-        postJson("$backendBaseUrl/v1/push/ack", body)
+        postJson(path = "/v1/push/ack", body = body)
     }
 
-    private suspend fun postJson(url: String, body: String) {
-        runCatching {
-            val connection = openConnection(url)
-            connection.requestMethod = "POST"
-            connection.setRequestProperty("Content-Type", "application/json")
-            connection.doOutput = true
-            connection.outputStream.bufferedWriter().use { writer ->
-                writer.write(body)
+    private suspend fun postJson(path: String, body: String) {
+        backendBaseUrls.forEach { base ->
+            val fullUrl = "$base$path"
+            val sent = runCatching {
+                val connection = openConnection(fullUrl)
+                connection.requestMethod = "POST"
+                connection.setRequestProperty("Content-Type", "application/json")
+                connection.setRequestProperty(HEADER_APP_ID, HEADER_APP_ID_VALUE)
+                val secret = BuildConfig.PUSH_SHARED_SECRET.trim()
+                if (secret.isNotBlank()) {
+                    connection.setRequestProperty(HEADER_SHARED_SECRET, secret)
+                }
+                connection.doOutput = true
+                connection.outputStream.bufferedWriter().use { writer ->
+                    writer.write(body)
+                }
+                connection.inputStream.close()
+                connection.disconnect()
+                true
+            }.getOrElse { false }
+            if (sent) {
+                return
             }
-            connection.inputStream.close()
-            connection.disconnect()
         }
     }
 
@@ -167,7 +190,11 @@ class AndroidNotificationService(
 
     companion object {
         private const val PREFS = "tgweb_runtime"
+        // Hidden runtime override key (no user-facing setting).
         private const val KEY_BACKEND_BASE_URL = "push_backend_url"
+        private const val HEADER_SHARED_SECRET = "X-FlyGram-Key"
+        private const val HEADER_APP_ID = "X-FlyGram-App"
+        private const val HEADER_APP_ID_VALUE = "android"
         private const val KEY_NOTIFICATION_COLOR = "notification_color"
         const val CHANNEL_MESSAGES = "flygram_messages"
         const val CHANNEL_SILENT = "flygram_silent"

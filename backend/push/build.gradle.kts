@@ -23,5 +23,6 @@ dependencies {
     implementation("io.ktor:ktor-server-content-negotiation-jvm:2.3.12")
     implementation("io.ktor:ktor-serialization-kotlinx-json-jvm:2.3.12")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
+    implementation("com.google.auth:google-auth-library-oauth2-http:1.24.1")
     implementation("ch.qos.logback:logback-classic:1.5.6")
 }

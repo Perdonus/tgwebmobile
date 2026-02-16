@@ -18,6 +18,8 @@ captures/
 *.keystore
 keystore.properties
 google-services.json
+firebase/*.json
+secrets/*.json
 !signing/tgweb-update.jks
 
 # Colab local runtime notebook (use template instead)

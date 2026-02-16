@@ -7,20 +7,14 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.view.View
-import android.widget.EditText
-import android.widget.Toast
-import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
-import androidx.lifecycle.lifecycleScope
 import androidx.preference.Preference
 import androidx.preference.PreferenceGroupAdapter
 import androidx.preference.PreferenceFragmentCompat
 import androidx.preference.SeekBarPreference
 import androidx.preference.SwitchPreferenceCompat
 import androidx.recyclerview.widget.RecyclerView
-import com.google.firebase.messaging.FirebaseMessaging
 import com.tgweb.core.data.AppRepositories
-import kotlinx.coroutines.launch
 
 class ModSettingsFragment : PreferenceFragmentCompat() {
     private val runtimePrefs by lazy {
@@ -35,7 +29,6 @@ class ModSettingsFragment : PreferenceFragmentCompat() {
         bindKeepAlivePreference()
         bindBundledWebPreference()
         bindPushPermissionPreference()
-        bindPushBackendPreference()
         bindProxyEntryPreference()
         bindSessionToolsPreference()
         bindDownloadsEntryPreference()
@@ -51,7 +44,6 @@ class ModSettingsFragment : PreferenceFragmentCompat() {
     override fun onResume() {
         super.onResume()
         updatePushPermissionSummary()
-        updatePushBackendSummary()
     }
 
     private fun bindScalePreference() {
@@ -103,36 +95,6 @@ class ModSettingsFragment : PreferenceFragmentCompat() {
         val pref = findPreference<Preference>(KEY_PUSH_PERMISSION) ?: return
         pref.setOnPreferenceClickListener {
             (activity as? ModSettingsActivity)?.requestPushPermissionFromSettings()
-            true
-        }
-    }
-
-    private fun bindPushBackendPreference() {
-        val pref = findPreference<Preference>(KEY_PUSH_BACKEND_URL) ?: return
-        pref.setOnPreferenceClickListener {
-            val input = EditText(requireContext()).apply {
-                hint = getString(R.string.mod_push_backend_hint)
-                setText(runtimePrefs.getString(KEY_PUSH_BACKEND_URL_RUNTIME, "").orEmpty())
-            }
-            AlertDialog.Builder(requireContext())
-                .setTitle(R.string.mod_push_backend_title)
-                .setView(input)
-                .setPositiveButton(android.R.string.ok) { _, _ ->
-                    val value = input.text?.toString()?.trim().orEmpty().trimEnd('/')
-                    runtimePrefs.edit().putString(KEY_PUSH_BACKEND_URL_RUNTIME, value).apply()
-                    updatePushBackendSummary()
-                    Toast.makeText(requireContext(), getString(R.string.mod_push_backend_saved), Toast.LENGTH_SHORT).show()
-                    if (value.isNotBlank()) {
-                        FirebaseMessaging.getInstance().token
-                            .addOnSuccessListener { token ->
-                                viewLifecycleOwner.lifecycleScope.launch {
-                                    runCatching { AppRepositories.notificationService.registerDeviceToken(token) }
-                                }
-                            }
-                    }
-                }
-                .setNegativeButton(android.R.string.cancel, null)
-                .show()
             true
         }
     }
@@ -216,16 +178,6 @@ class ModSettingsFragment : PreferenceFragmentCompat() {
         }
     }
 
-    private fun updatePushBackendSummary() {
-        val pref = findPreference<Preference>(KEY_PUSH_BACKEND_URL) ?: return
-        val value = runtimePrefs.getString(KEY_PUSH_BACKEND_URL_RUNTIME, "").orEmpty().trim()
-        pref.summary = if (value.isBlank()) {
-            getString(R.string.mod_push_backend_summary_missing)
-        } else {
-            getString(R.string.mod_push_backend_summary, value)
-        }
-    }
-
     private fun isPushPermissionGranted(): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return true
         return ContextCompat.checkSelfPermission(
@@ -238,8 +190,6 @@ class ModSettingsFragment : PreferenceFragmentCompat() {
         private const val KEY_SCALE = "mod_interface_scale"
         private const val KEY_KEEP_ALIVE = "mod_keep_alive"
         private const val KEY_PUSH_PERMISSION = "mod_push_permission"
-        private const val KEY_PUSH_BACKEND_URL = "mod_push_backend_url"
-        private const val KEY_PUSH_BACKEND_URL_RUNTIME = "push_backend_url"
         private const val KEY_PROXY_SETTINGS = "mod_proxy_settings"
         private const val KEY_SESSION_TOOLS = "mod_session_tools"
         private const val KEY_DOWNLOADS_MANAGER = "mod_downloads_manager"

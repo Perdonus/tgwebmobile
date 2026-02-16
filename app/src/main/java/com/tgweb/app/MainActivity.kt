@@ -512,6 +512,10 @@ class MainActivity : ComponentActivity() {
         val navColor = runCatching { Color.parseColor(navRaw) }.getOrDefault(statusColor)
         window.statusBarColor = statusColor
         window.navigationBarColor = navColor
+        WindowInsetsControllerCompat(window, window.decorView).apply {
+            isAppearanceLightStatusBars = ColorUtils.calculateLuminance(statusColor) > 0.58
+            isAppearanceLightNavigationBars = ColorUtils.calculateLuminance(navColor) > 0.58
+        }
     }
 
     private fun colorToHex(color: Int): String {
@@ -1075,11 +1079,68 @@ class MainActivity : ComponentActivity() {
                 return p;
               };
 
-              var colorFromCss = function(cssColor) {
-                var m = String(cssColor || '').match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
-                if (!m) { return '#0e1621'; }
-                var r = Number(m[1]), g = Number(m[2]), b = Number(m[3]);
-                var toHex = function(v) { return Math.max(0, Math.min(255, v)).toString(16).padStart(2, '0'); };
+              var toHex = function(v) {
+                return Math.max(0, Math.min(255, Number(v) || 0)).toString(16).padStart(2, '0');
+              };
+
+              var hexToRgb = function(hex) {
+                var c = String(hex || '').replace('#', '');
+                if (c.length === 3) {
+                  c = c[0] + c[0] + c[1] + c[1] + c[2] + c[2];
+                }
+                if (c.length !== 6) { return null; }
+                return {
+                  r: parseInt(c.slice(0, 2), 16),
+                  g: parseInt(c.slice(2, 4), 16),
+                  b: parseInt(c.slice(4, 6), 16)
+                };
+              };
+
+              var colorCtx = null;
+              var parseCssColor = function(cssColor) {
+                var raw = String(cssColor || '').trim();
+                if (!raw || raw === 'transparent') { return null; }
+                if (!colorCtx) {
+                  try {
+                    var canvas = document.createElement('canvas');
+                    canvas.width = 1;
+                    canvas.height = 1;
+                    colorCtx = canvas.getContext('2d');
+                  } catch (_) {
+                    colorCtx = null;
+                  }
+                }
+                if (!colorCtx) { return null; }
+                try {
+                  colorCtx.clearRect(0, 0, 1, 1);
+                  colorCtx.fillStyle = 'rgba(0,0,0,0)';
+                  colorCtx.fillStyle = raw;
+                  colorCtx.fillRect(0, 0, 1, 1);
+                  var data = colorCtx.getImageData(0, 0, 1, 1).data;
+                  return {
+                    r: Number(data[0]) || 0,
+                    g: Number(data[1]) || 0,
+                    b: Number(data[2]) || 0,
+                    a: (Number(data[3]) || 0) / 255
+                  };
+                } catch (_) {
+                  return null;
+                }
+              };
+
+              var colorFromCss = function(cssColor, fallbackHex, baseHex) {
+                var fallback = fallbackHex || '';
+                var rgba = parseCssColor(cssColor);
+                if (!rgba || rgba.a <= 0.02) { return fallback; }
+                var r = rgba.r;
+                var g = rgba.g;
+                var b = rgba.b;
+                if (rgba.a < 0.995) {
+                  var baseRgb = hexToRgb(baseHex || fallback || '#0e1621') || { r: 14, g: 22, b: 33 };
+                  r = Math.round(r * rgba.a + baseRgb.r * (1 - rgba.a));
+                  g = Math.round(g * rgba.a + baseRgb.g * (1 - rgba.a));
+                  b = Math.round(b * rgba.a + baseRgb.b * (1 - rgba.a));
+                }
                 return '#' + toHex(r) + toHex(g) + toHex(b);
               };
 
@@ -1092,9 +1153,9 @@ class MainActivity : ComponentActivity() {
                 return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
               };
 
-              var blendHex = function(fromHex, toHex, amount) {
+              var blendHex = function(fromHex, toHexColor, amount) {
                 var from = String(fromHex || '#0e1621').replace('#', '');
-                var to = String(toHex || '#ffffff').replace('#', '');
+                var to = String(toHexColor || '#ffffff').replace('#', '');
                 if (from.length !== 6 || to.length !== 6) { return fromHex || '#0e1621'; }
                 var mix = clamp(Number(amount) || 0, 0, 1);
                 var fromR = parseInt(from.slice(0, 2), 16);
@@ -1109,13 +1170,93 @@ class MainActivity : ComponentActivity() {
                 return '#' + r + g + b;
               };
 
+              var readCssVarColor = function(styles, fallbackHex, baseHex) {
+                if (!styles || !styles.getPropertyValue) { return ''; }
+                var vars = [
+                  '--tg-theme-bg-color',
+                  '--color-background',
+                  '--surface-color',
+                  '--secondary-background-color',
+                  '--theme-background-color',
+                  '--chat-background-color'
+                ];
+                for (var i = 0; i < vars.length; i++) {
+                  var raw = styles.getPropertyValue(vars[i]);
+                  var parsed = colorFromCss(raw, '', baseHex || fallbackHex);
+                  if (parsed) { return parsed; }
+                }
+                return '';
+              };
+
+              var readElementSurfaceColor = function(el, fallbackHex, baseHex) {
+                var fallback = fallbackHex || '#0e1621';
+                var base = baseHex || fallback;
+                var node = el;
+                var depth = 0;
+                while (node && depth < 10) {
+                  try {
+                    var styles = getComputedStyle(node);
+                    var fromVars = readCssVarColor(styles, '', base);
+                    if (fromVars) { return fromVars; }
+                    var bgColor = colorFromCss(styles.backgroundColor, '', base);
+                    if (bgColor) { return bgColor; }
+                  } catch (_) {}
+                  node = node.parentElement;
+                  depth += 1;
+                }
+                return fallback;
+              };
+
+              var resolveSystemSurfaceColor = function() {
+                var fallback = '#0e1621';
+                var docStyles = getComputedStyle(document.documentElement);
+                var bodyStyles = getComputedStyle(document.body || document.documentElement);
+                var base = readCssVarColor(docStyles, '', fallback) ||
+                  readCssVarColor(bodyStyles, '', fallback) ||
+                  colorFromCss(bodyStyles.backgroundColor, '', fallback) ||
+                  colorFromCss(docStyles.backgroundColor, fallback, fallback) ||
+                  fallback;
+
+                var selectorCandidates = [
+                  '.chat-background',
+                  '.app-wrapper',
+                  '.left-sidebar',
+                  '.sidebar-left',
+                  '.chat',
+                  '.chat-main',
+                  '.settings-container',
+                  '#root'
+                ];
+                for (var i = 0; i < selectorCandidates.length; i++) {
+                  var el = document.querySelector(selectorCandidates[i]);
+                  if (!el) { continue; }
+                  var color = readElementSurfaceColor(el, '', base);
+                  if (color) { return color; }
+                }
+
+                if (document.elementFromPoint) {
+                  var points = [
+                    [Math.floor(window.innerWidth * 0.5), 2],
+                    [Math.floor(window.innerWidth * 0.5), Math.max(2, Math.floor(window.innerHeight * 0.08))],
+                    [Math.floor(window.innerWidth * 0.5), Math.max(2, window.innerHeight - 3)]
+                  ];
+                  for (var j = 0; j < points.length; j++) {
+                    var point = points[j];
+                    var target = document.elementFromPoint(point[0], point[1]);
+                    if (!target) { continue; }
+                    var sampled = readElementSurfaceColor(target, '', base);
+                    if (sampled) { return sampled; }
+                  }
+                }
+                return base;
+              };
+
               var syncSystemBars = function() {
-                var styles = getComputedStyle(document.body || document.documentElement);
-                var bg = colorFromCss(styles.backgroundColor || '#0e1621');
-                var isLight = luminance(bg) > 0.62;
+                var surface = resolveSystemSurfaceColor();
+                var isLight = luminance(surface) > 0.58;
                 send('${BridgeCommandTypes.SET_SYSTEM_UI_STYLE}', {
-                  statusBarColor: bg,
-                  navBarColor: bg,
+                  statusBarColor: surface,
+                  navBarColor: surface,
                   lightStatusIcons: String(isLight),
                   lightNavIcons: String(isLight)
                 });

@@ -35,6 +35,29 @@ Core goals:
 - APK signing is pinned to `signing/tgweb-update.jks` so debug/release updates keep the same signature across machines/Colab.
   Override credentials with `TGWEB_STORE_PASSWORD`, `TGWEB_KEY_ALIAS`, `TGWEB_KEY_PASSWORD` if needed.
 
+## Push backend deployment (FlyGram)
+- App uses built-in backend URL: `https://sosiskibot.ru/flygram/push` (no user setting required).
+- Backend expected bind host/port defaults:
+  - `PUSH_BIND_HOST=192.168.1.109`
+  - `PUSH_PORT=8081`
+- Protected endpoints require shared header:
+  - `X-FlyGram-Key: flygram_push_2026` (change in both app/backend before production).
+- Required env for real FCM delivery:
+  - `FCM_SERVICE_ACCOUNT_JSON=/absolute/path/to/firebase-service-account.json`
+  - `FCM_PROJECT_ID=<firebase-project-id>` (optional if present in service account json)
+
+Example Nginx location (subpath-safe):
+
+```nginx
+location /flygram/push/ {
+    proxy_pass http://192.168.1.109:8081/flygram/push/;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
 ## Colab build notebook
 - Template notebook: `colab/tgwebmobile_colab_build_template.ipynb`
 - Local runtime notebook (ignored by git): `colab/tgwebmobile_colab_build.ipynb`

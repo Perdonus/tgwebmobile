@@ -17,11 +17,6 @@
             android:key="mod_push_permission"
             android:title="@string/mod_push_permission_title"
             android:summary="@string/mod_push_permission_missing" />
-
-        <Preference
-            android:key="mod_push_backend_url"
-            android:title="@string/mod_push_backend_title"
-            android:summary="@string/mod_push_backend_summary_missing" />
     </PreferenceCategory>
 
     <PreferenceCategory android:title="@string/mod_category_network">
