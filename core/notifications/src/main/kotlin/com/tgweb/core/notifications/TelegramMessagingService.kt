@@ -34,7 +34,7 @@ class TelegramMessagingService : FirebaseMessagingService() {
         val notificationBody = remoteMessage.notification?.body.orEmpty()
         DebugLogStore.log(
             "PUSH_RECV",
-            "onMessageReceived dataKeys=${payload.keys.joinToString(",")} title=${notificationTitle.take(48)} body=${notificationBody.take(64)}",
+            "onMessageReceived dataKeys=${payload.keys.joinToString(",")} title=${notificationTitle.take(48)} body=${notificationBody.take(64)} from=${remoteMessage.from.orEmpty()} priority=${remoteMessage.priority} originalPriority=${remoteMessage.originalPriority} ttl=${remoteMessage.ttl} sentTime=${remoteMessage.sentTime}",
         )
 
         if (payload.isEmpty() && notificationBody.isBlank() && notificationTitle.isBlank()) {
@@ -44,7 +44,11 @@ class TelegramMessagingService : FirebaseMessagingService() {
         scope.launch {
             if (AppRepositories.isInitialized()) {
                 if (payload.isNotEmpty()) {
+                    DebugLogStore.log("PUSH_RECV", "handlePush start payloadSize=${payload.size}")
                     runCatching { AppRepositories.notificationService.handlePush(payload) }
+                        .onSuccess {
+                            DebugLogStore.log("PUSH_RECV", "handlePush success")
+                        }
                         .onFailure {
                             DebugLogStore.log(
                                 "PUSH_RECV",
@@ -53,14 +57,17 @@ class TelegramMessagingService : FirebaseMessagingService() {
                             showFallbackNotification(payload, notificationTitle, notificationBody)
                         }
                 } else {
+                    DebugLogStore.log("PUSH_RECV", "Payload empty, using fallback notification path")
                     showFallbackNotification(payload, notificationTitle, notificationBody)
                 }
                 // Reconcile unread/dialog state without re-triggering duplicate local notify.
+                DebugLogStore.log("PUSH_RECV", "Scheduling push sync worker with empty payload")
                 SyncScheduler.schedulePushSync(applicationContext, emptyMap())
             } else {
                 DebugLogStore.log("PUSH_RECV", "AppRepositories not initialized yet, using fallback local notification")
                 showFallbackNotification(payload, notificationTitle, notificationBody)
                 // Keep original payload so worker can ingest it later.
+                DebugLogStore.log("PUSH_RECV", "Scheduling push sync worker with original payload")
                 SyncScheduler.schedulePushSync(applicationContext, payload)
             }
         }

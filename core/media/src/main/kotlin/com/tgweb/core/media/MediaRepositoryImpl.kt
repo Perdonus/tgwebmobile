@@ -11,6 +11,7 @@ import android.webkit.WebSettings
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.tgweb.core.data.AppRepositories
+import com.tgweb.core.data.DebugLogStore
 import com.tgweb.core.data.MediaRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -66,13 +67,19 @@ class MediaRepositoryImpl(
     }
 
     override suspend fun cacheRemoteFile(fileId: String, url: String, mimeType: String, fileName: String?): Result<String> {
+        DebugLogStore.log(
+            "DOWNLOAD",
+            "cacheRemoteFile start fileId=$fileId url=${url.take(360)} mime=$mimeType name=${fileName.orEmpty()}",
+        )
         val existing = cacheManager.resolve(fileId)
         if (existing != null) {
+            DebugLogStore.log("DOWNLOAD", "cacheRemoteFile cache hit fileId=$fileId localUri=$existing")
             AppRepositories.postDownloadProgress(fileId = fileId, percent = 100, localUri = existing)
             return Result.success(existing)
         }
 
         if (url.isBlank()) {
+            DebugLogStore.log("DOWNLOAD", "cacheRemoteFile failed: missing url for fileId=$fileId")
             AppRepositories.postDownloadProgress(fileId = fileId, percent = 0, error = "missing_url")
             return Result.failure(IllegalArgumentException("Remote url is empty"))
         }
@@ -88,6 +95,10 @@ class MediaRepositoryImpl(
             while (true) {
                 connection = openConfiguredConnection(requestUrl)
                 val responseCode = connection.responseCode
+                DebugLogStore.log(
+                    "DOWNLOAD_HTTP",
+                    "HTTP $responseCode url=$requestUrl contentType=${connection.contentType.orEmpty()} len=${connection.contentLengthLong}",
+                )
 
                 if (responseCode in 300..399 && redirects < MAX_REDIRECTS) {
                     val location = connection.getHeaderField("Location").orEmpty().trim()
@@ -98,6 +109,7 @@ class MediaRepositoryImpl(
                     }
                     connection.disconnect()
                     if (nextUrl.isNullOrBlank()) break
+                    DebugLogStore.log("DOWNLOAD_HTTP", "Redirect $requestUrl -> $nextUrl")
                     requestUrl = nextUrl
                     redirects += 1
                     continue
@@ -136,6 +148,10 @@ class MediaRepositoryImpl(
             )
             val finalFileName = chooseFileName(provided = fileName, detected = headerName)
             val contentLength = connection.contentLengthLong.coerceAtLeast(0L)
+            DebugLogStore.log(
+                "DOWNLOAD_HTTP",
+                "Resolved file fileId=$fileId finalName=$finalFileName provided=${fileName.orEmpty()} detected=$headerName mime=$resolvedMime len=$contentLength",
+            )
 
             var lastProgress = -1
             val path = connection.inputStream.use { input ->
@@ -153,6 +169,9 @@ class MediaRepositoryImpl(
                                 lastProgress = progress
                                 AppRepositories.postDownloadProgress(fileId = fileId, percent = progress)
                                 showDownloadNotification(fileId, finalFileName, progress, inProgress = progress < 100)
+                                if (progress % 10 == 0 || progress >= 97) {
+                                    DebugLogStore.log("DOWNLOAD", "Progress fileId=$fileId percent=$progress")
+                                }
                             }
                         }
                     },
@@ -174,8 +193,10 @@ class MediaRepositoryImpl(
 
             AppRepositories.postDownloadProgress(fileId = fileId, percent = 100, localUri = path)
             showDownloadNotification(fileId, finalFileName, 100, inProgress = false)
+            DebugLogStore.log("DOWNLOAD", "cacheRemoteFile success fileId=$fileId localUri=$path bytes=$writtenBytes")
             path
         }.onFailure {
+            DebugLogStore.logError("DOWNLOAD", "cacheRemoteFile failure fileId=$fileId", it)
             AppRepositories.postDownloadProgress(fileId = fileId, percent = 0, error = "download_failed")
             showDownloadNotification(fileId, fileName ?: fileId, 0, inProgress = false, failed = true)
         }
@@ -208,6 +229,7 @@ class MediaRepositoryImpl(
 
         val uri = context.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
             ?: return Result.failure(IllegalStateException("Cannot create download entry"))
+        DebugLogStore.log("DOWNLOAD", "Export to public start fileId=$fileId uri=$uri")
 
         context.contentResolver.openOutputStream(uri)?.use { out ->
             source.inputStream().use { input -> input.copyTo(out) }
@@ -219,6 +241,7 @@ class MediaRepositoryImpl(
 
         AppRepositories.postDownloadProgress(fileId = fileId, percent = 100, localUri = uri.toString())
         showDownloadNotification(fileId, source.name, 100, inProgress = false)
+        DebugLogStore.log("DOWNLOAD", "Export to public success fileId=$fileId uri=$uri")
         return Result.success(uri.toString())
     }
 
@@ -487,6 +510,11 @@ class MediaRepositoryImpl(
     private fun chooseFileName(provided: String?, detected: String): String {
         val providedClean = provided?.trim().orEmpty()
         val detectedClean = detected.trim()
+        val providedArtifact = isLikelyArtifactName(providedClean)
+        val detectedArtifact = isLikelyArtifactName(detectedClean)
+        if (providedArtifact && detectedClean.isNotBlank() && !detectedArtifact) {
+            return detectedClean
+        }
         if (detectedClean.isNotBlank() && !detectedClean.equals("download", ignoreCase = true)) {
             if (providedClean.isBlank()) return detectedClean
             val providedHasTextExt = providedClean.endsWith(".txt", ignoreCase = true)
@@ -501,6 +529,15 @@ class MediaRepositoryImpl(
     private fun isLikelyHtmlResponse(contentType: String): Boolean {
         val lower = contentType.lowercase()
         return lower.contains("text/html") || lower.contains("application/xhtml+xml")
+    }
+
+    private fun isLikelyArtifactName(value: String): Boolean {
+        if (value.isBlank()) return false
+        val lower = value.lowercase()
+        if (lower == "download" || lower == "download.bin") return true
+        val onlyName = lower.substringAfterLast('/').substringAfterLast('\\')
+        return Regex("^[0-9a-f]{8,}[_-].+\\.(zip|bin|tmp|dat|part)$").matches(onlyName) ||
+            Regex("^[0-9a-f-]{24,}\\.(zip|bin|tmp|dat|part)$").matches(onlyName)
     }
 
     private fun extractRedirectUrlFromHtml(html: String, baseUrl: String): String? {
@@ -584,6 +621,12 @@ class MediaRepositoryImpl(
         inProgress: Boolean,
         failed: Boolean = false,
     ) {
+        if (failed || !inProgress || progress == 0 || progress >= 100 || progress % 20 == 0) {
+            DebugLogStore.log(
+                "DOWNLOAD_NOTIFY",
+                "notify fileId=$fileId title=${title.take(60)} progress=$progress inProgress=$inProgress failed=$failed",
+            )
+        }
         val builder = NotificationCompat.Builder(context, DOWNLOAD_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setOnlyAlertOnce(true)

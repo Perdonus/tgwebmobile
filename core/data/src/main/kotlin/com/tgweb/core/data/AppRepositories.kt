@@ -45,6 +45,10 @@ object AppRepositories {
 
     fun postDownloadProgress(fileId: String, percent: Int, localUri: String? = null, error: String? = null) {
         if (!::webBridge.isInitialized) return
+        DebugLogStore.log(
+            "DOWNLOAD_EVT",
+            "postDownloadProgress fileId=$fileId percent=$percent localUri=${localUri.orEmpty().take(180)} error=${error.orEmpty()}",
+        )
 
         val payload = mutableMapOf(
             "fileId" to fileId,

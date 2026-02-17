@@ -1,11 +1,17 @@
 package com.tgweb.app
 
+import android.app.DownloadManager
 import android.app.Application
 import android.content.Context
+import android.net.Uri
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.os.Environment
+import android.webkit.CookieManager
+import android.webkit.URLUtil
 import com.tgweb.core.data.AppRepositories
 import com.tgweb.core.data.ChatRepositoryImpl
+import com.tgweb.core.data.DebugLogStore
 import com.tgweb.core.db.TelegramDatabaseFactory
 import com.tgweb.core.db.entity.SyncStateEntity
 import com.tgweb.core.media.MediaCacheManager
@@ -33,10 +39,14 @@ class MainApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        DebugLogStore.installUncaughtHandler()
+        DebugLogStore.log("APP", "MainApplication.onCreate start")
         runCatching { SessionBackupManager.applyPendingImportIfNeeded(this) }
         ensureRuntimeDefaults()
+        DebugLogStore.log("APP", "Runtime defaults ensured")
 
         val database = TelegramDatabaseFactory.create(this, passphrase = "qa-only-passphrase")
+        DebugLogStore.log("APP", "Database created")
         val tdLibGateway = StubTdLibGateway()
         val chatRepository = ChatRepositoryImpl(
             chatDao = database.chatDao(),
@@ -44,24 +54,29 @@ class MainApplication : Application() {
             syncStateDao = database.syncStateDao(),
             tdLibGateway = tdLibGateway,
         )
+        DebugLogStore.log("APP", "ChatRepository initialized")
 
         val cacheManager = MediaCacheManager(
             context = this,
             mediaDao = database.mediaDao(),
         )
         val mediaRepository = MediaRepositoryImpl(this, cacheManager)
+        DebugLogStore.log("APP", "MediaRepository initialized")
 
         val notificationService = AndroidNotificationService(this)
         notificationService.ensureChannels()
+        DebugLogStore.log("APP", "Notification channels ensured")
         val webBridge = WebBridgeBus()
 
         webBridge.registerCommandHandler { command ->
             appScope.launch {
                 when (command.type) {
                     BridgeCommandTypes.GET_OFFLINE_STATUS -> {
+                        DebugLogStore.log("BRIDGE", "Command GET_OFFLINE_STATUS")
                         AppRepositories.postNetworkState(isNetworkAvailable())
                     }
                     BridgeCommandTypes.REQUEST_PUSH_PERMISSION -> {
+                        DebugLogStore.log("BRIDGE", "Command REQUEST_PUSH_PERMISSION")
                         AppRepositories.postSyncState(
                             lastSyncAt = System.currentTimeMillis(),
                             unreadCount = 0,
@@ -69,6 +84,7 @@ class MainApplication : Application() {
                     }
                     BridgeCommandTypes.PIN_MEDIA -> {
                         val fileId = command.payload["fileId"].orEmpty()
+                        DebugLogStore.log("BRIDGE", "Command PIN_MEDIA fileId=$fileId")
                         if (fileId.isNotBlank()) {
                             cacheManager.pin(fileId)
                             AppRepositories.postDownloadProgress(fileId = fileId, percent = 100)
@@ -76,6 +92,10 @@ class MainApplication : Application() {
                     }
                     BridgeCommandTypes.DOWNLOAD_MEDIA -> {
                         val fileId = command.payload["fileId"].orEmpty()
+                        DebugLogStore.log(
+                            "DOWNLOAD",
+                            "Command DOWNLOAD_MEDIA fileId=$fileId url=${command.payload["url"].orEmpty().take(240)}",
+                        )
                         if (fileId.isBlank()) return@launch
                         val url = command.payload["url"].orEmpty()
                         val mime = command.payload["mime"].orEmpty()
@@ -87,25 +107,48 @@ class MainApplication : Application() {
                             mimeType = mime,
                             fileName = name,
                         )
+                        cacheResult.exceptionOrNull()?.let {
+                            DebugLogStore.logError("DOWNLOAD", "DOWNLOAD_MEDIA cacheRemoteFile failed fileId=$fileId", it)
+                            val fallbackDownloadId = runCatching {
+                                enqueuePlatformDownload(
+                                    url = url,
+                                    mimeType = mime,
+                                    fileName = name,
+                                )
+                            }.getOrNull()
+                            if (fallbackDownloadId != null) {
+                                DebugLogStore.log(
+                                    "DOWNLOAD",
+                                    "Platform fallback started fileId=$fileId downloadManagerId=$fallbackDownloadId",
+                                )
+                            }
+                        }
 
                         val export = command.payload["export"].orEmpty().equals("true", ignoreCase = true)
                         if (export) {
-                            mediaRepository.downloadToPublicStorage(
+                            DebugLogStore.log("DOWNLOAD", "Export requested for fileId=$fileId")
+                            val exportResult = mediaRepository.downloadToPublicStorage(
                                 fileId,
                                 command.payload["targetCollection"] ?: "flygram_downloads",
                             )
+                            exportResult.exceptionOrNull()?.let {
+                                DebugLogStore.logError("DOWNLOAD", "Export failed fileId=$fileId", it)
+                            }
                         } else {
                             val cachedPath = cacheResult.getOrNull().orEmpty()
                             if (cachedPath.isNotBlank()) {
+                                DebugLogStore.log("DOWNLOAD", "Cache complete for fileId=$fileId localUri=$cachedPath")
                                 AppRepositories.postDownloadProgress(fileId = fileId, percent = 100, localUri = cachedPath)
                             }
                         }
                     }
                     BridgeCommandTypes.SET_PROXY -> {
+                        DebugLogStore.log("BRIDGE", "Command SET_PROXY payloadKeys=${command.payload.keys.joinToString(",")}")
                         val proxyState = parseProxyConfig(command.payload) ?: return@launch
                         AppRepositories.updateProxyState(proxyState)
                     }
                     BridgeCommandTypes.GET_PROXY_STATUS -> {
+                        DebugLogStore.log("BRIDGE", "Command GET_PROXY_STATUS")
                         AppRepositories.postProxyState()
                     }
                 }
@@ -187,16 +230,26 @@ class MainApplication : Application() {
         runCatching {
             FirebaseMessaging.getInstance().token
                 .addOnSuccessListener { token ->
+                    DebugLogStore.log("PUSH_REG", "Startup token fetch success prefix=${token.take(16)}...")
                     appScope.launch {
                         runCatching { AppRepositories.notificationService.registerDeviceToken(token) }
+                            .onFailure {
+                                DebugLogStore.logError("PUSH_REG", "Startup registerDeviceToken failed", it)
+                            }
                     }
+                }
+                .addOnFailureListener {
+                    DebugLogStore.logError("PUSH_REG", "Startup token fetch failed", it)
                 }
         }
 
         SyncScheduler.schedulePeriodic(this)
+        DebugLogStore.log("SYNC", "Periodic sync scheduled")
         if (KeepAliveService.isEnabled(this)) {
             KeepAliveService.start(this)
+            DebugLogStore.log("KEEP_ALIVE", "KeepAliveService started from application")
         }
+        DebugLogStore.log("APP", "MainApplication.onCreate done")
     }
 
     private fun isNetworkAvailable(): Boolean {
@@ -329,5 +382,41 @@ class MainApplication : Application() {
         if (changed) {
             editor.apply()
         }
+    }
+
+    private fun enqueuePlatformDownload(
+        url: String,
+        mimeType: String,
+        fileName: String?,
+    ): Long {
+        val guessedName = URLUtil.guessFileName(url, null, mimeType)
+        val resolvedName = fileName
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?: guessedName.ifBlank { "download.bin" }
+        val safeName = resolvedName.replace(Regex("[\\\\/:*?\"<>|]"), "_")
+        val destinationPath = "flygram_downloads/$safeName"
+
+        val request = DownloadManager.Request(Uri.parse(url)).apply {
+            setTitle(safeName)
+            setDescription("FlyGram fallback download")
+            if (mimeType.isNotBlank()) {
+                setMimeType(mimeType)
+            }
+            setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+            setAllowedOverMetered(true)
+            setAllowedOverRoaming(true)
+            setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, destinationPath)
+
+            val cookie = runCatching { CookieManager.getInstance().getCookie(url) }.getOrNull()
+            if (!cookie.isNullOrBlank()) {
+                addRequestHeader("Cookie", cookie)
+            }
+            addRequestHeader("Referer", "https://web.telegram.org/")
+            addRequestHeader("User-Agent", "FlyGram/1.0 AndroidWebView")
+        }
+
+        val manager = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+        return manager.enqueue(request)
     }
 }

@@ -1,14 +1,17 @@
 package com.tgweb.core.notifications
 
+import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Color
 import android.os.Build
 import android.provider.Settings
 import android.security.NetworkSecurityPolicy
+import androidx.core.content.ContextCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.tgweb.core.data.AppRepositories
@@ -185,7 +188,23 @@ class AndroidNotificationService(
 
     override fun showMessageNotification(event: MessageItem) {
         ensureChannels()
-        if (!NotificationManagerCompat.from(context).areNotificationsEnabled()) return
+        val notificationsEnabled = NotificationManagerCompat.from(context).areNotificationsEnabled()
+        val postGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS,
+            ) == PackageManager.PERMISSION_GRANTED
+        } else {
+            true
+        }
+        DebugLogStore.log(
+            "PUSH_NOTIFY",
+            "showMessageNotification chatId=${event.chatId} messageId=${event.messageId} enabled=$notificationsEnabled permission=$postGranted textLen=${event.text.length}",
+        )
+        if (!notificationsEnabled || !postGranted) {
+            DebugLogStore.log("PUSH_NOTIFY", "Notification skipped due to disabled permission/channel")
+            return
+        }
 
         val intent = Intent(context, Class.forName("com.tgweb.app.MainActivity")).apply {
             putExtra("chat_id", event.chatId)
@@ -212,6 +231,7 @@ class AndroidNotificationService(
             .build()
 
         NotificationManagerCompat.from(context).notify(event.chatId.toInt(), notification)
+        DebugLogStore.log("PUSH_NOTIFY", "notify() posted id=${event.chatId.toInt()} title=Chat ${event.chatId}")
     }
 
     private suspend fun sendAck(messageId: String) {
@@ -227,6 +247,8 @@ class AndroidNotificationService(
                 "PUSH_ACK",
                 "Ack failed code=${trace.code ?: -1} url=${trace.url} error=${trace.error.orEmpty()} body=${trace.responseBody.take(200)}",
             )
+        } else {
+            DebugLogStore.log("PUSH_ACK", "Ack success code=${trace.code ?: 200} url=${trace.url}")
         }
     }
 

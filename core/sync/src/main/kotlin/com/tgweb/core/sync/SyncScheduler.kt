@@ -9,6 +9,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.OutOfQuotaPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
+import com.tgweb.core.data.DebugLogStore
 import java.util.concurrent.TimeUnit
 
 object SyncScheduler {
@@ -23,6 +24,7 @@ object SyncScheduler {
         val request = PeriodicWorkRequestBuilder<SyncWorker>(15, TimeUnit.MINUTES)
             .setConstraints(constraints)
             .build()
+        DebugLogStore.log("SYNC", "Enqueue periodic sync request id=${request.id}")
 
         WorkManager.getInstance(context).enqueueUniquePeriodicWork(
             PERIODIC_SYNC_WORK,
@@ -36,6 +38,7 @@ object SyncScheduler {
             .setInputData(PushProcessWorker.payloadData(payload))
             .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
             .build()
+        DebugLogStore.log("SYNC", "Enqueue push sync request id=${request.id} payloadKeys=${payload.keys.joinToString(",")}")
 
         WorkManager.getInstance(context).enqueueUniqueWork(
             PUSH_SYNC_WORK,

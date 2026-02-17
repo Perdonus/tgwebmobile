@@ -22,11 +22,14 @@ import android.view.ViewGroup
 import android.webkit.HttpAuthHandler
 import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
+import android.webkit.ConsoleMessage
+import android.webkit.SslErrorHandler
 import android.webkit.URLUtil
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -66,6 +69,7 @@ import java.net.InetSocketAddress
 import java.net.Proxy
 import java.net.Socket
 import java.net.URL
+import android.net.http.SslError
 
 class MainActivity : ComponentActivity() {
     private lateinit var rootLayout: FrameLayout
@@ -92,11 +96,16 @@ class MainActivity : ComponentActivity() {
 
     private val filePickerLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            DebugLogStore.log(
+                "FILE_PICKER",
+                "Result received code=${result.resultCode} hasData=${result.data != null}",
+            )
             val callback = pendingFileChooser ?: return@registerForActivityResult
             pendingFileChooser = null
 
             val uris = WebChromeClient.FileChooserParams.parseResult(result.resultCode, result.data)
             if (uris != null) {
+                DebugLogStore.log("FILE_PICKER", "Parsed chooser result count=${uris.size}")
                 callback.onReceiveValue(uris)
                 return@registerForActivityResult
             }
@@ -115,22 +124,27 @@ class MainActivity : ComponentActivity() {
                     }
                 }
                 callback.onReceiveValue(if (list.isEmpty()) null else list.toTypedArray())
+                DebugLogStore.log("FILE_PICKER", "Manual chooser result count=${list.size}")
             } else {
                 callback.onReceiveValue(null)
+                DebugLogStore.log("FILE_PICKER", "Chooser cancelled")
             }
         }
 
     private val notificationPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            DebugLogStore.log("PUSH_PERM", "POST_NOTIFICATIONS result granted=$granted")
             AppRepositories.postPushPermissionState(granted)
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         startedAtElapsedMs = SystemClock.elapsedRealtime()
+        DebugLogStore.log("LIFECYCLE", "MainActivity.onCreate intent=${intent?.dataString.orEmpty()}")
 
         val isDebuggable = (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
         WebView.setWebContentsDebuggingEnabled(isDebuggable)
+        DebugLogStore.log("WEB", "WebView debugging=${if (isDebuggable) "enabled" else "disabled"}")
 
         initViews()
         configureWebView()
@@ -153,11 +167,13 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        DebugLogStore.log("LIFECYCLE", "MainActivity.onNewIntent data=${intent.dataString.orEmpty()}")
         handleLaunchIntent(intent)
     }
 
     override fun onResume() {
         super.onResume()
+        DebugLogStore.log("LIFECYCLE", "MainActivity.onResume")
         applyInterfaceScale(currentScalePercent().toString())
         webView.settings.cacheMode = if (isNetworkAvailable()) {
             WebSettings.LOAD_DEFAULT
@@ -183,6 +199,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        DebugLogStore.log("LIFECYCLE", "MainActivity.onDestroy")
         loadingJob?.cancel()
         AppRepositories.webBridge.setWebEventSink(null)
         webView.removeJavascriptInterface(JS_BRIDGE_NAME)
@@ -262,7 +279,28 @@ class MainActivity : ComponentActivity() {
 
         webView.webChromeClient = object : WebChromeClient() {
             override fun onPermissionRequest(request: PermissionRequest?) {
+                DebugLogStore.log(
+                    "WEB_PERM",
+                    "Permission request resources=${request?.resources?.joinToString(",").orEmpty()} origin=${request?.origin}",
+                )
                 request?.grant(request.resources)
+            }
+
+            override fun onConsoleMessage(consoleMessage: ConsoleMessage?): Boolean {
+                if (consoleMessage != null) {
+                    DebugLogStore.log(
+                        "WEB_CONSOLE",
+                        "${consoleMessage.messageLevel().name} ${consoleMessage.sourceId()}:${consoleMessage.lineNumber()} ${consoleMessage.message()}",
+                    )
+                }
+                return super.onConsoleMessage(consoleMessage)
+            }
+
+            override fun onProgressChanged(view: WebView?, newProgress: Int) {
+                if (newProgress == 0 || newProgress == 100 || newProgress % 25 == 0) {
+                    DebugLogStore.log("WEB_LOAD", "Progress=$newProgress url=${view?.url.orEmpty()}")
+                }
+                super.onProgressChanged(view, newProgress)
             }
 
             override fun onShowFileChooser(
@@ -270,6 +308,10 @@ class MainActivity : ComponentActivity() {
                 filePathCallback: ValueCallback<Array<Uri>>?,
                 fileChooserParams: FileChooserParams?,
             ): Boolean {
+                DebugLogStore.log(
+                    "FILE_PICKER",
+                    "onShowFileChooser mode=${fileChooserParams?.mode ?: -1} accept=${fileChooserParams?.acceptTypes?.joinToString(",").orEmpty()}",
+                )
                 if (filePathCallback == null) return false
                 pendingFileChooser?.onReceiveValue(null)
                 pendingFileChooser = filePathCallback
@@ -286,14 +328,17 @@ class MainActivity : ComponentActivity() {
 
                 if (chooserIntent == null) {
                     pendingFileChooser = null
+                    DebugLogStore.log("FILE_PICKER", "Unable to build chooser intent")
                     return false
                 }
 
                 return runCatching {
                     filePickerLauncher.launch(Intent.createChooser(chooserIntent, "Select file"))
+                    DebugLogStore.log("FILE_PICKER", "Chooser launched")
                     true
                 }.getOrElse {
                     pendingFileChooser = null
+                    DebugLogStore.logError("FILE_PICKER", "Chooser launch failed", it)
                     false
                 }
             }
@@ -338,7 +383,7 @@ class MainActivity : ComponentActivity() {
                         }
                         DebugLogStore.log(
                             "WEB_REQ",
-                            "${request?.method ?: "GET"} $requestUrl main=${request?.isForMainFrame == true} gesture=${request?.hasGesture() == true} proxy=$proxySummary",
+                            "${request.method} $requestUrl main=${request.isForMainFrame} gesture=${request.hasGesture()} proxy=$proxySummary",
                         )
                     }
                 }
@@ -347,6 +392,10 @@ class MainActivity : ComponentActivity() {
 
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                 val uri = request?.url ?: return false
+                DebugLogStore.log(
+                    "WEB_NAV",
+                    "shouldOverrideUrlLoading url=$uri main=${request.isForMainFrame} redirect=${request.isRedirect}",
+                )
                 if (uri.scheme == "tgweb" && uri.host == "auth") {
                     handleAuthHandoff(uri)
                     return true
@@ -364,11 +413,40 @@ class MainActivity : ComponentActivity() {
                 error: WebResourceError?,
             ) {
                 super.onReceivedError(view, request, error)
+                val requestUrl = request?.url?.toString().orEmpty()
+                DebugLogStore.log(
+                    "WEB_ERR",
+                    "onReceivedError url=$requestUrl code=${error?.errorCode ?: -1} desc=${error?.description?.toString().orEmpty()} main=${request?.isForMainFrame == true}",
+                )
                 if (request?.isForMainFrame != true) return
                 if (attemptedOfflineFallback) return
                 if (isNetworkAvailable()) return
                 attemptedOfflineFallback = true
                 loadOfflineFallbackPage()
+            }
+
+            override fun onReceivedHttpError(
+                view: WebView?,
+                request: WebResourceRequest?,
+                errorResponse: WebResourceResponse?,
+            ) {
+                super.onReceivedHttpError(view, request, errorResponse)
+                DebugLogStore.log(
+                    "WEB_HTTP",
+                    "HTTP ${errorResponse?.statusCode ?: -1} url=${request?.url?.toString().orEmpty()} main=${request?.isForMainFrame == true}",
+                )
+            }
+
+            override fun onReceivedSslError(
+                view: WebView?,
+                handler: SslErrorHandler?,
+                error: SslError?,
+            ) {
+                DebugLogStore.log(
+                    "WEB_SSL",
+                    "SSL error primary=${error?.primaryError ?: -1} url=${error?.url.orEmpty()}",
+                )
+                super.onReceivedSslError(view, handler, error)
             }
 
             override fun onReceivedHttpAuthRequest(
@@ -406,9 +484,14 @@ class MainActivity : ComponentActivity() {
 
         webView.setDownloadListener { url, _, contentDisposition, mimeType, _ ->
             if (url.isNullOrBlank()) return@setDownloadListener
+            DebugLogStore.log(
+                "DOWNLOAD",
+                "DownloadListener url=${url.take(360)} mime=${mimeType.orEmpty()} cd=${contentDisposition.orEmpty().take(200)}",
+            )
             val uri = runCatching { Uri.parse(url) }.getOrNull()
             val scheme = uri?.scheme?.lowercase().orEmpty()
             if (scheme.isNotBlank() && scheme !in setOf("http", "https")) {
+                DebugLogStore.log("DOWNLOAD", "Skip native download for unsupported scheme=$scheme")
                 Toast.makeText(this, "Download link is not supported in native cache: $scheme", Toast.LENGTH_SHORT).show()
                 return@setDownloadListener
             }
@@ -416,6 +499,10 @@ class MainActivity : ComponentActivity() {
             val guessedFileName = URLUtil.guessFileName(url, contentDisposition, mimeType)
             val displayFileName = resolveDownloadDisplayName(url, guessedFileName, mimeType)
             val stableFileId = buildStableDownloadFileId(url, displayFileName)
+            DebugLogStore.log(
+                "DOWNLOAD",
+                "Resolved download fileId=$stableFileId guessed=$guessedFileName display=$displayFileName",
+            )
             AppRepositories.webBridge.onFromWeb(
                 BridgeCommand(
                     type = BridgeCommandTypes.DOWNLOAD_MEDIA,
@@ -435,6 +522,7 @@ class MainActivity : ComponentActivity() {
         webView.addJavascriptInterface(
             AndroidBridgeJsApi { command ->
                 runOnUiThread {
+                    DebugLogStore.log("BRIDGE", "FromWeb type=${command.type} keys=${command.payload.keys.joinToString(",")}")
                     when (command.type) {
                         BridgeCommandTypes.REQUEST_PUSH_PERMISSION -> requestNotificationPermission()
                         BridgeCommandTypes.OPEN_MOD_SETTINGS -> openModSettings()
@@ -459,6 +547,7 @@ class MainActivity : ComponentActivity() {
 
     private fun attachBridgeSink() {
         AppRepositories.webBridge.setWebEventSink { event ->
+            DebugLogStore.log("BRIDGE", "ToWeb type=${event.type} keys=${event.payload.keys.joinToString(",")}")
             runOnUiThread { emitBridgeEvent(event) }
         }
     }
@@ -481,6 +570,10 @@ class MainActivity : ComponentActivity() {
     private fun loadWebBundle() {
         val bundledUrl = resolveBundledWebKUrl()
         val useBundled = runtimePrefs.getBoolean(KeepAliveService.KEY_USE_BUNDLED_WEBK, false)
+        DebugLogStore.log(
+            "WEB",
+            "loadWebBundle online=${isNetworkAvailable()} bundled=${bundledUrl != null} useBundled=$useBundled",
+        )
 
         if (isNetworkAvailable()) {
             if (bundledUrl != null && useBundled) {
@@ -511,6 +604,10 @@ class MainActivity : ComponentActivity() {
 
     private fun loadOfflineFallbackPage() {
         val bundledUrl = resolveBundledWebKUrl()
+        DebugLogStore.log(
+            "OFFLINE",
+            "loadOfflineFallbackPage bundled=${bundledUrl != null} archive=${offlineArchiveFile.exists()} html=${offlineCacheFile.exists()}",
+        )
         when {
             bundledUrl != null -> {
                 webView.loadUrl(bundledUrl)
@@ -545,6 +642,7 @@ class MainActivity : ComponentActivity() {
         val prompted = runtimePrefs.getBoolean(KeepAliveService.KEY_PUSH_PERMISSION_PROMPTED, false)
         if (prompted) return
 
+        DebugLogStore.log("PUSH_PERM", "First-run permission prompt scheduled")
         runtimePrefs.edit().putBoolean(KeepAliveService.KEY_PUSH_PERMISSION_PROMPTED, true).apply()
         requestNotificationPermission()
     }
@@ -591,9 +689,14 @@ class MainActivity : ComponentActivity() {
 
     private fun handleLaunchIntent(intent: Intent?) {
         val dataUri = intent?.data
+        DebugLogStore.log(
+            "INTENT",
+            "handleLaunchIntent action=${intent?.action.orEmpty()} data=${dataUri?.toString().orEmpty()} extras=${intent?.extras?.keySet()?.joinToString(",").orEmpty()}",
+        )
         if (dataUri != null) {
             val parsed = ProxyLinkParser.parse(dataUri)
             if (parsed != null) {
+                DebugLogStore.log("INTENT", "Launch intent contains proxy link, opening proxy sheet")
                 openProxyBottomSheet(parsed, dataUri.toString())
                 return
             }
@@ -601,6 +704,7 @@ class MainActivity : ComponentActivity() {
 
         val openChannelUsername = intent?.getStringExtra(EXTRA_OPEN_CHANNEL_USERNAME).orEmpty()
         if (openChannelUsername.isNotBlank()) {
+            DebugLogStore.log("INTENT", "Launch intent open channel @$openChannelUsername")
             openAuthorChannel(openChannelUsername)
         }
 
@@ -608,12 +712,14 @@ class MainActivity : ComponentActivity() {
         val messageId = intent?.getLongExtra("message_id", 0L) ?: 0L
         val preview = intent?.getStringExtra("preview").orEmpty()
         if (chatId > 0L) {
+            DebugLogStore.log("INTENT", "Launch from notification chatId=$chatId messageId=$messageId")
             AppRepositories.postPushMessageReceived(chatId = chatId, messageId = messageId, preview = preview)
         }
     }
 
     private fun showProxyBottomSheet(raw: String?) {
         if (raw.isNullOrBlank()) return
+        DebugLogStore.log("PROXY", "showProxyBottomSheet raw=${raw.take(280)}")
         val normalized = raw
             .replace("&amp;", "&")
             .trim()
@@ -627,6 +733,7 @@ class MainActivity : ComponentActivity() {
         val parsed = ProxyLinkParser.parse(normalized)
             ?: ProxyLinkParser.parse(Uri.decode(normalized))
             ?: return
+        DebugLogStore.log("PROXY", "Proxy link parsed type=${parsed.type.name} host=${parsed.host}:${parsed.port}")
         openProxyBottomSheet(parsed, normalized)
     }
 
@@ -785,6 +892,7 @@ class MainActivity : ComponentActivity() {
 
     private fun openAuthorChannel(username: String? = "plugin_ai", allowDeferUntilWebUiReady: Boolean = true) {
         val normalized = username?.trim()?.trimStart('@').orEmpty().ifBlank { "plugin_ai" }
+        DebugLogStore.log("WEB", "openAuthorChannel username=@$normalized allowDefer=$allowDeferUntilWebUiReady ready=$webUiReadyForProxy")
         if (allowDeferUntilWebUiReady && !webUiReadyForProxy) {
             pendingOpenChannelUsername = normalized
             DebugLogStore.log("WEB", "Author channel open deferred until WEB_UI_READY: @$normalized")
@@ -813,10 +921,12 @@ class MainActivity : ComponentActivity() {
         runCatching {
             webView.evaluateJavascript(script) { result ->
                 if (!result.equals("true", ignoreCase = true)) {
+                    DebugLogStore.log("WEB", "openAuthorChannel fallback loadUrl for @$normalized")
                     webView.loadUrl(channelUrl)
                 }
             }
         }.onFailure {
+            DebugLogStore.logError("WEB", "openAuthorChannel evaluateJavascript failed", it)
             webView.loadUrl(channelUrl)
         }
     }
@@ -1020,7 +1130,10 @@ class MainActivity : ComponentActivity() {
         val href = payload["href"].orEmpty()
         val mode = payload["mode"].orEmpty()
         DebugLogStore.log("WEB", "WEB_UI_READY received: mode=$mode href=$href")
-        if (webUiReadyForProxy) return
+        if (webUiReadyForProxy) {
+            DebugLogStore.log("WEB", "WEB_UI_READY ignored: already ready")
+            return
+        }
         webUiReadyForProxy = true
 
         lifecycleScope.launch {
@@ -2435,6 +2548,7 @@ class MainActivity : ComponentActivity() {
 
     private fun requestNotificationPermission() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            DebugLogStore.log("PUSH_PERM", "Permission request skipped: SDK<33")
             AppRepositories.postPushPermissionState(true)
             return
         }
@@ -2444,10 +2558,12 @@ class MainActivity : ComponentActivity() {
             Manifest.permission.POST_NOTIFICATIONS,
         ) == PackageManager.PERMISSION_GRANTED
         if (granted) {
+            DebugLogStore.log("PUSH_PERM", "POST_NOTIFICATIONS already granted")
             AppRepositories.postPushPermissionState(true)
             return
         }
 
+        DebugLogStore.log("PUSH_PERM", "Launching POST_NOTIFICATIONS permission prompt")
         notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
     }
 
