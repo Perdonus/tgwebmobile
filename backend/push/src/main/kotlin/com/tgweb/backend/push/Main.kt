@@ -13,6 +13,7 @@ import io.ktor.server.netty.Netty
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.request.receive
 import io.ktor.server.response.respond
+import io.ktor.server.response.respondFile
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
@@ -26,6 +27,7 @@ import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import java.io.File
 import java.io.FileInputStream
 import java.net.HttpURLConnection
 import java.net.URL
@@ -44,6 +46,8 @@ private const val ENV_BASE_PATH = "PUSH_BASE_PATH"
 private const val ENV_SHARED_SECRET = "PUSH_SHARED_SECRET"
 private const val ENV_FCM_PROJECT_ID = "FCM_PROJECT_ID"
 private const val ENV_FCM_SERVICE_ACCOUNT_JSON = "FCM_SERVICE_ACCOUNT_JSON"
+private const val ENV_FIREBASE_GOOGLE_SERVICES_JSON = "FIREBASE_GOOGLE_SERVICES_JSON"
+private const val ENV_FIREBASE_ADMIN_SDK_JSON = "FIREBASE_ADMIN_SDK_JSON"
 
 @Serializable
 data class DeviceRegistration(
@@ -97,6 +101,10 @@ private val bindHost = System.getenv(ENV_BIND_HOST)?.trim().orEmpty().ifBlank { 
 private val bindPort = System.getenv(ENV_BIND_PORT)?.toIntOrNull() ?: 8081
 private val apiBasePath = normalizeBasePath(System.getenv(ENV_BASE_PATH)?.trim().orEmpty().ifBlank { "/flygram/push" })
 private val sharedSecret = System.getenv(ENV_SHARED_SECRET)?.trim().orEmpty().ifBlank { DEFAULT_SHARED_SECRET }
+private val googleServicesJsonPath = System.getenv(ENV_FIREBASE_GOOGLE_SERVICES_JSON)?.trim().orEmpty()
+    .ifBlank { "/root/tgweb/app/google-services.json" }
+private val adminSdkJsonPath = System.getenv(ENV_FIREBASE_ADMIN_SDK_JSON)?.trim().orEmpty()
+    .ifBlank { System.getenv(ENV_FCM_SERVICE_ACCOUNT_JSON)?.trim().orEmpty() }
 
 fun main() {
     embeddedServer(
@@ -299,6 +307,16 @@ private fun Route.registerPushRoutes(pathPrefix: String) {
             },
         )
     }
+
+    get("/v1/files/google-services.json") {
+        if (!call.requireAuthorized()) return@get
+        call.respondJsonFile(googleServicesJsonPath, "google-services.json")
+    }
+
+    get("/v1/files/firebase-adminsdk.json") {
+        if (!call.requireAuthorized()) return@get
+        call.respondJsonFile(adminSdkJsonPath, "firebase-adminsdk.json")
+    }
 }
 
 private fun resolveTargetDevices(request: PushSendRequest): List<DeviceRegistration> {
@@ -344,6 +362,21 @@ private suspend fun ApplicationCall.requireAuthorized(): Boolean {
         },
     )
     return false
+}
+
+private suspend fun ApplicationCall.respondJsonFile(path: String, label: String) {
+    val file = File(path)
+    if (!file.exists() || !file.isFile) {
+        respond(
+            HttpStatusCode.NotFound,
+            buildJsonObject {
+                put("status", JsonPrimitive("file_not_found"))
+                put("file", JsonPrimitive(label))
+            },
+        )
+        return
+    }
+    respondFile(file)
 }
 
 private object FcmGateway {
