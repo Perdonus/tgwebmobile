@@ -134,13 +134,8 @@ class AndroidNotificationService(
 
         val messageId = System.currentTimeMillis().toString()
         val preview = "FlyGram debug push ${UUID.randomUUID().toString().take(8)}"
-        val body = JSONObject()
+        val baseSendBody = JSONObject()
             .put("deviceIds", org.json.JSONArray().put(deviceId))
-            .apply {
-                if (!fcmToken.isNullOrBlank()) {
-                    put("fcmTokens", org.json.JSONArray().put(fcmToken))
-                }
-            }
             .put("priority", "high")
             .put(
                 "data",
@@ -149,10 +144,21 @@ class AndroidNotificationService(
                     .put("message_id", messageId)
                     .put("text", preview),
             )
-            .toString()
+        val body = JSONObject(baseSendBody.toString()).apply {
+            if (!fcmToken.isNullOrBlank()) {
+                put("fcmTokens", org.json.JSONArray().put(fcmToken))
+            }
+        }.toString()
         append("Request body prepared: message_id=$messageId")
 
-        val trace = postJsonWithTrace(path = "/v1/push/send", body = body, tag = "PUSH_TEST")
+        var trace = postJsonWithTrace(path = "/v1/push/send", body = body, tag = "PUSH_TEST")
+        if (trace.code == 400 && !fcmToken.isNullOrBlank()) {
+            append("Send returned HTTP 400. Retrying with legacy payload without fcmTokens...")
+            val legacyBody = baseSendBody.toString()
+            val legacyTrace = postJsonWithTrace(path = "/v1/push/send", body = legacyBody, tag = "PUSH_TEST")
+            append("Legacy retry result: success=${legacyTrace.success} code=${legacyTrace.code ?: -1}")
+            trace = legacyTrace
+        }
         append("Final result: success=${trace.success} url=${trace.url}")
         append("HTTP code: ${trace.code ?: -1}")
         if (!trace.responseBody.isNullOrBlank()) {
@@ -225,20 +231,55 @@ class AndroidNotificationService(
         val appVersion = runCatching {
             context.packageManager.getPackageInfo(context.packageName, 0).versionName
         }.getOrDefault("unknown")
-        val body = JSONObject()
-            .put("userId", 0)
-            .put("deviceId", deviceId)
-            .put("fcmToken", fcmToken)
-            .put("appVersion", appVersion)
-            .put("locale", context.resources.configuration.locales[0].toLanguageTag())
-            .put("capabilities", listOf("webk", "offline_r1", "proxy", "background_push"))
-            .toString()
+        val locale = context.resources.configuration.locales[0].toLanguageTag()
 
         DebugLogStore.log(
             "PUSH_REG",
             "Register device token requested: deviceId=$deviceId tokenPrefix=${fcmToken.take(16)}... backendCount=${backendBaseUrls.size}",
         )
-        return postJsonWithTrace(path = "/v1/devices/register", body = body, tag = "PUSH_REG")
+
+        val payloads = listOf(
+            "full" to JSONObject()
+                .put("userId", 0)
+                .put("deviceId", deviceId)
+                .put("fcmToken", fcmToken)
+                .put("appVersion", appVersion)
+                .put("locale", locale)
+                .put("capabilities", listOf("webk", "offline_r1", "proxy", "background_push"))
+                .toString(),
+            "no_capabilities" to JSONObject()
+                .put("userId", 0)
+                .put("deviceId", deviceId)
+                .put("fcmToken", fcmToken)
+                .put("appVersion", appVersion)
+                .put("locale", locale)
+                .toString(),
+            "minimal" to JSONObject()
+                .put("deviceId", deviceId)
+                .put("fcmToken", fcmToken)
+                .toString(),
+        )
+
+        var lastTrace = PostTrace(success = false, url = "", code = null, responseBody = "", error = "register_not_attempted")
+        payloads.forEachIndexed { index, (name, payload) ->
+            val trace = postJsonWithTrace(path = "/v1/devices/register", body = payload, tag = "PUSH_REG")
+            lastTrace = trace
+            if (trace.success) {
+                if (index > 0) {
+                    DebugLogStore.log("PUSH_REG", "Registration succeeded with legacy payload variant=$name")
+                }
+                return trace
+            }
+            // Retry only malformed-request class to stay compatible with older servers.
+            if (trace.code != 400) {
+                return trace
+            }
+            DebugLogStore.log(
+                "PUSH_REG",
+                "Registration payload variant=$name failed with HTTP 400; trying fallback variant",
+            )
+        }
+        return lastTrace
     }
 
     private suspend fun postJsonWithTrace(path: String, body: String, tag: String): PostTrace {
