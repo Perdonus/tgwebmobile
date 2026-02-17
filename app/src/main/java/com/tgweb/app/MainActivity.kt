@@ -318,9 +318,11 @@ class MainActivity : ComponentActivity() {
                 cacheCurrentMainFrameHtml(url)
                 injectBootstrap()
                 injectMobileEnhancements()
-                webUiReadyForProxy = false
+                probeWebUiReady()
                 DebugLogStore.log("WEB", "Page finished: ${url.orEmpty()}")
-                DebugLogStore.log("PROXY", "Waiting for WEB_UI_READY before applying proxy")
+                if (!webUiReadyForProxy) {
+                    DebugLogStore.log("PROXY", "Waiting for WEB_UI_READY before applying proxy")
+                }
                 hideLoadingOverlayWithMinimumDuration()
             }
 
@@ -889,26 +891,14 @@ class MainActivity : ComponentActivity() {
         if (uri.scheme.equals("blob", ignoreCase = true)) {
             return "blob_${fileName.hashCode()}"
         }
-        val ignoredParams = setOf(
-            "offset", "range", "start", "end", "part", "chunk", "segment",
-            "range_start", "range_end", "from", "to",
-        )
-        val pathTail = uri.lastPathSegment.orEmpty()
-        val segmentLikePath = isLikelySegmentFileName(pathTail)
-        val segmentLikeName = isLikelySegmentFileName(fileName)
-        val hasSegmentParams = uri.queryParameterNames.any { ignoredParams.contains(it.lowercase()) }
-        val segmentLike = segmentLikePath || segmentLikeName || hasSegmentParams
         val normalized = buildString {
             append(uri.scheme.orEmpty())
             append("://")
             append(uri.host.orEmpty())
-            if (!segmentLikePath) {
-                append(uri.path.orEmpty())
-            }
+            append(uri.path.orEmpty())
             if (uri.queryParameterNames.isNotEmpty()) {
                 val query = uri.queryParameterNames
                     .sorted()
-                    .filterNot { ignoredParams.contains(it.lowercase()) }
                     .joinToString("&") { key ->
                         val values = uri.getQueryParameters(key)
                         if (values.isNullOrEmpty()) key else "$key=${values.joinToString(",")}"
@@ -919,11 +909,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-        return if (segmentLike) {
-            "${normalized.hashCode()}_seg"
-        } else {
-            "${normalized.hashCode()}_${fileName.hashCode()}"
-        }
+        return "${normalized.hashCode()}_${fileName.hashCode()}"
     }
 
     private fun resolveDownloadDisplayName(url: String, guessedFileName: String, mimeType: String?): String {
@@ -936,11 +922,10 @@ class MainActivity : ComponentActivity() {
             uri.getQueryParameter(key)?.trim()?.takeIf { it.isNotBlank() }
         }
         val guessed = guessedFileName.trim()
-        val segmentLikeGuessed = isLikelySegmentFileName(guessed)
         if (!fromQuery.isNullOrBlank()) {
             return sanitizeDownloadName(fromQuery, mimeType)
         }
-        return if (segmentLikeGuessed) sanitizeDownloadName("download", mimeType) else guessed
+        return guessed
     }
 
     private fun sanitizeDownloadName(base: String, mimeType: String?): String {
@@ -956,14 +941,6 @@ class MainActivity : ComponentActivity() {
             else -> "bin"
         }
         return "$cleaned.$ext"
-    }
-
-    private fun isLikelySegmentFileName(name: String): Boolean {
-        val normalized = name.trim().substringAfterLast('/').lowercase()
-        if (normalized.isBlank()) return false
-        return Regex("^[0-9a-f]{6,}\\.(zip|bin|tmp|dat|part)$").matches(normalized) ||
-            Regex("^part[_-]?[0-9]+\\.(zip|bin|tmp|dat)$").matches(normalized) ||
-            Regex("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}[_-].+\\.(zip|bin|tmp|dat|part)$").matches(normalized)
     }
 
     private fun buildAuthLogoDataUri(): String {
@@ -1061,6 +1038,31 @@ class MainActivity : ComponentActivity() {
                 openAuthorChannel(queuedChannel, allowDeferUntilWebUiReady = false)
             }
         }
+    }
+
+    private fun probeWebUiReady() {
+        val script = """
+            (function() {
+              try {
+                if (!window.AndroidBridge || !window.AndroidBridge.send) { return; }
+                var authReady = !!document.querySelector(
+                  '#auth-pages .auth-image,.auth-pages .auth-image,.auth-pages input[type="tel"],.auth-pages .qr-canvas'
+                );
+                var chatReady = !!document.querySelector(
+                  '.left-sidebar .chatlist .chatlist-chat,.chat-main .bubbles,.chat-input .input-message-input'
+                );
+                if (!authReady && !chatReady) { return; }
+                window.AndroidBridge.send(JSON.stringify({
+                  type: '${BridgeCommandTypes.WEB_UI_READY}',
+                  payload: {
+                    href: String(location.href || ''),
+                    mode: authReady ? 'auth' : 'chat'
+                  }
+                }));
+              } catch (_) {}
+            })();
+        """.trimIndent()
+        webView.evaluateJavascript(script, null)
     }
 
     private fun setKeepAliveEnabled(rawEnabled: String?) {

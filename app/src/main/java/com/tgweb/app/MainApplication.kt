@@ -96,7 +96,7 @@ class MainApplication : Application() {
                             )
                         } else {
                             val cachedPath = cacheResult.getOrNull().orEmpty()
-                            if (cachedPath.isNotBlank() && cachedPath != "__segment_pending__") {
+                            if (cachedPath.isNotBlank()) {
                                 AppRepositories.postDownloadProgress(fileId = fileId, percent = 100, localUri = cachedPath)
                             }
                         }

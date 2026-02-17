@@ -73,8 +73,15 @@ class AndroidNotificationService(
         val text = payload["text"].orEmpty()
         val messageId = payload["message_id"]?.toLongOrNull() ?: System.currentTimeMillis()
         if (chatId != 0L && text.isNotBlank()) {
-            AppRepositories.chatRepository.ingestPushMessage(chatId = chatId, messageId = messageId, preview = text)
-            AppRepositories.postPushMessageReceived(chatId = chatId, messageId = messageId, preview = text)
+            runCatching {
+                AppRepositories.chatRepository.ingestPushMessage(chatId = chatId, messageId = messageId, preview = text)
+                AppRepositories.postPushMessageReceived(chatId = chatId, messageId = messageId, preview = text)
+            }.onFailure {
+                DebugLogStore.log(
+                    "PUSH_RECV",
+                    "ingestPushMessage failed: ${it::class.java.simpleName}: ${it.message}",
+                )
+            }
             showMessageNotification(
                 MessageItem(
                     messageId = messageId,

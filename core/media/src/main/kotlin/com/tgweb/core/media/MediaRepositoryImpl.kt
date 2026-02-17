@@ -66,9 +66,8 @@ class MediaRepositoryImpl(
     }
 
     override suspend fun cacheRemoteFile(fileId: String, url: String, mimeType: String, fileName: String?): Result<String> {
-        val isSegmentedUrl = isLikelySegmentRequest(url)
         val existing = cacheManager.resolve(fileId)
-        if (existing != null && !isSegmentedUrl) {
+        if (existing != null) {
             AppRepositories.postDownloadProgress(fileId = fileId, percent = 100, localUri = existing)
             return Result.success(existing)
         }
@@ -137,27 +136,6 @@ class MediaRepositoryImpl(
             )
             val finalFileName = chooseFileName(provided = fileName, detected = headerName)
             val contentLength = connection.contentLengthLong.coerceAtLeast(0L)
-            val contentRange = parseContentRange(connection.getHeaderField("Content-Range"))
-            val isSegmented = isSegmentedUrl || contentRange != null
-
-            if (isSegmented) {
-                val input = connection.inputStream
-                val result = try {
-                    cacheSegmentChunk(
-                        fileId = fileId,
-                        source = input,
-                        mimeType = resolvedMime,
-                        fileName = finalFileName,
-                        url = requestUrl,
-                        contentLength = contentLength,
-                        contentRange = contentRange,
-                    )
-                } finally {
-                    input.close()
-                }
-                connection.disconnect()
-                return@runCatching result
-            }
 
             var lastProgress = -1
             val path = connection.inputStream.use { input ->

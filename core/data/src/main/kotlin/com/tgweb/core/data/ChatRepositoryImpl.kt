@@ -122,20 +122,6 @@ class ChatRepositoryImpl(
 
     override suspend fun ingestPushMessage(chatId: Long, messageId: Long, preview: String) {
         val now = System.currentTimeMillis()
-        messageDao.upsertAll(
-            listOf(
-                MessageEntity(
-                    messageId = messageId,
-                    chatId = chatId,
-                    senderUserId = 0L,
-                    text = preview,
-                    status = "received",
-                    createdAt = now,
-                    updatedAt = now,
-                )
-            )
-        )
-
         val existingChat = chatDao.getChat(chatId)
         val updatedUnread = (existingChat?.unreadCount ?: 0) + 1
         chatDao.upsertAll(
@@ -147,6 +133,20 @@ class ChatRepositoryImpl(
                     lastMessagePreview = preview,
                     lastMessageAt = now,
                     avatarFileId = existingChat?.avatarFileId,
+                )
+            )
+        )
+
+        messageDao.upsertAll(
+            listOf(
+                MessageEntity(
+                    messageId = messageId,
+                    chatId = chatId,
+                    senderUserId = 0L,
+                    text = preview,
+                    status = "received",
+                    createdAt = now,
+                    updatedAt = now,
                 )
             )
         )

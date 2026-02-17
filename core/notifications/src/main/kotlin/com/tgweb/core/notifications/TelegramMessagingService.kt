@@ -80,17 +80,26 @@ class TelegramMessagingService : FirebaseMessagingService() {
 
         val chatId = payload["chat_id"]?.toLongOrNull() ?: 777000L
         val messageId = payload["message_id"]?.toLongOrNull() ?: System.currentTimeMillis()
-        val notificationService = AndroidNotificationService(applicationContext)
-        notificationService.ensureChannels()
-        notificationService.showMessageNotification(
-            MessageItem(
-                messageId = messageId,
-                chatId = chatId,
-                senderUserId = 0L,
-                text = body,
-                status = "received",
-                createdAt = System.currentTimeMillis(),
-            ),
-        )
+        runCatching {
+            val notificationService = AndroidNotificationService(applicationContext)
+            notificationService.ensureChannels()
+            notificationService.showMessageNotification(
+                MessageItem(
+                    messageId = messageId,
+                    chatId = chatId,
+                    senderUserId = 0L,
+                    text = body,
+                    status = "received",
+                    createdAt = System.currentTimeMillis(),
+                ),
+            )
+        }.onSuccess {
+            DebugLogStore.log("PUSH_RECV", "fallback notification shown chatId=$chatId messageId=$messageId")
+        }.onFailure {
+            DebugLogStore.log(
+                "PUSH_RECV",
+                "fallback notification failed: ${it::class.java.simpleName}: ${it.message}",
+            )
+        }
     }
 }
