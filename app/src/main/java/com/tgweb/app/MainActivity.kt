@@ -1841,12 +1841,20 @@ class MainActivity : ComponentActivity() {
                   '}';
               };
 
+              var authOverlayProbeStartedAt = Date.now();
+              var authOverlayStableSince = 0;
+              var authOverlayChatSeenAt = 0;
+
               var ensureAuthImportButtons = function() {
                 var authRoot = document.getElementById('auth-pages') ||
                   document.querySelector('.auth-pages,.login-page,[class*=\"auth-pages\"],.page-signIn,.page-signQR,.page-signUp,.page-authCode,.page-password');
                 var chatVisible = !!document.querySelector(
                   '.left-sidebar .chatlist .chatlist-chat,.chat-main .bubbles,.chat-input .input-message-input'
                 );
+                var now = Date.now();
+                if (chatVisible) {
+                  authOverlayChatSeenAt = now;
+                }
                 var authVisible = !!(authRoot &&
                   authRoot.offsetParent !== null &&
                   authRoot.getBoundingClientRect &&
@@ -1855,9 +1863,24 @@ class MainActivity : ComponentActivity() {
                   authRoot.querySelector('input[type=\"tel\"],input[type=\"password\"],.qr-canvas,.auth-code-input'));
                 var authLogoNode = document.querySelector('.auth-image .sign-logo,.auth-image svg.sign-logo,.auth-image');
                 var authLogoVisible = !!(authLogoNode && authLogoNode.offsetParent !== null);
+
                 var hash = String(location.hash || '').toLowerCase();
-                var hashLooksAuth = !hash || hash === '#' || hash.indexOf('auth') >= 0 || hash.indexOf('login') >= 0;
-                var isAuthMode = !!authRoot && !chatVisible && (authVisible || authInteractive || authLogoVisible || hashLooksAuth);
+                var hashLooksAuth = hash.indexOf('auth') >= 0 || hash.indexOf('login') >= 0 || hash.indexOf('sign') >= 0;
+                var authCandidateVisible = !!authRoot && !chatVisible && authVisible && (authInteractive || authLogoVisible || hashLooksAuth);
+
+                if (authCandidateVisible) {
+                  if (!authOverlayStableSince) {
+                    authOverlayStableSince = now;
+                  }
+                } else {
+                  authOverlayStableSince = 0;
+                }
+
+                var stableAuthVisible = authOverlayStableSince > 0 && (now - authOverlayStableSince) >= 1300;
+                var allowByHashFallback = (now - authOverlayProbeStartedAt) >= 3200 &&
+                  hashLooksAuth &&
+                  (now - authOverlayChatSeenAt) >= 900;
+                var isAuthMode = !!authRoot && !chatVisible && stableAuthVisible && (authInteractive || allowByHashFallback);
 
                 var existing = document.querySelector('.tgweb-auth-import-actions');
                 var existingBranding = document.querySelector('.flygram-auth-branding');
