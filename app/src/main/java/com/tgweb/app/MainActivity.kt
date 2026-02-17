@@ -962,7 +962,8 @@ class MainActivity : ComponentActivity() {
         val normalized = name.trim().substringAfterLast('/').lowercase()
         if (normalized.isBlank()) return false
         return Regex("^[0-9a-f]{6,}\\.(zip|bin|tmp|dat|part)$").matches(normalized) ||
-            Regex("^part[_-]?[0-9]+\\.(zip|bin|tmp|dat)$").matches(normalized)
+            Regex("^part[_-]?[0-9]+\\.(zip|bin|tmp|dat)$").matches(normalized) ||
+            Regex("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}[_-].+\\.(zip|bin|tmp|dat|part)$").matches(normalized)
     }
 
     private fun buildAuthLogoDataUri(): String {

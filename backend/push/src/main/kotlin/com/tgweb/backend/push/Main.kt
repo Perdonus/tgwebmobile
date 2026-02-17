@@ -77,6 +77,7 @@ data class PushMetricEvent(
 data class PushSendRequest(
     val userId: Long? = null,
     val deviceIds: List<String> = emptyList(),
+    val fcmTokens: List<String> = emptyList(),
     val data: Map<String, String> = emptyMap(),
     val priority: String = "high",
     val ttlSeconds: Long? = 60L,
@@ -205,6 +206,7 @@ private fun Route.registerPushRoutes(pathPrefix: String) {
                             }
                         },
                     )
+                    put("requested_fcm_tokens_count", JsonPrimitive(body.fcmTokens.count { it.isNotBlank() }))
                     body.userId?.let { put("user_id", JsonPrimitive(it)) }
                 },
             )
@@ -307,12 +309,28 @@ private fun resolveTargetDevices(request: PushSendRequest): List<DeviceRegistrat
         ?.let { userId -> devices.values.filter { registration -> registration.userId == userId } }
         .orEmpty()
 
-    val all = if (byDeviceIds.isNotEmpty() || byUserId.isNotEmpty()) {
-        byDeviceIds + byUserId
+    val byFcmTokens = request.fcmTokens
+        .map { it.trim() }
+        .filter { it.isNotBlank() }
+        .distinct()
+        .map { token ->
+            devices.values.firstOrNull { registration -> registration.fcmToken == token }
+                ?: DeviceRegistration(
+                    userId = request.userId ?: 0L,
+                    deviceId = "direct-token:${token.takeLast(10)}",
+                    fcmToken = token,
+                    appVersion = "direct_token",
+                    locale = "und",
+                    capabilities = listOf("direct_token"),
+                )
+        }
+
+    val all = if (byDeviceIds.isNotEmpty() || byUserId.isNotEmpty() || byFcmTokens.isNotEmpty()) {
+        byDeviceIds + byUserId + byFcmTokens
     } else {
         devices.values.toList()
     }
-    return all.distinctBy { it.deviceId }
+    return all.distinctBy { it.fcmToken }
 }
 
 private suspend fun ApplicationCall.requireAuthorized(): Boolean {

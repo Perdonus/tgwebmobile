@@ -59,23 +59,12 @@ class AndroidNotificationService(
 
     override suspend fun registerDeviceToken(fcmToken: String) {
         if (backendBaseUrls.isEmpty()) return
-        val appVersion = runCatching {
-            context.packageManager.getPackageInfo(context.packageName, 0).versionName
-        }.getOrDefault("unknown")
-        val body = JSONObject()
-            .put("userId", 0)
-            .put("deviceId", deviceId)
-            .put("fcmToken", fcmToken)
-            .put("appVersion", appVersion)
-            .put("locale", context.resources.configuration.locales[0].toLanguageTag())
-            .put("capabilities", listOf("webk", "offline_r1", "proxy", "background_push"))
-            .toString()
-
-        DebugLogStore.log(
-            "PUSH_REG",
-            "Register device token requested: deviceId=$deviceId tokenPrefix=${fcmToken.take(16)}... backendCount=${backendBaseUrls.size}",
-        )
-        postJson(path = "/v1/devices/register", body = body)
+        val trace = registerDeviceTokenWithTrace(fcmToken)
+        if (!trace.success) {
+            throw IllegalStateException(
+                "register failed code=${trace.code ?: -1} url=${trace.url} error=${trace.error ?: "unknown"} body=${trace.responseBody.take(240)}",
+            )
+        }
     }
 
     override suspend fun handlePush(payload: Map<String, String>) {
@@ -123,9 +112,21 @@ class AndroidNotificationService(
         val fcmToken = fetchFcmTokenOrNull()
         if (!fcmToken.isNullOrBlank()) {
             append("FCM token acquired: ${fcmToken.take(20)}...")
-            runCatching { registerDeviceToken(fcmToken) }
-                .onSuccess { append("Device re-registration: OK") }
-                .onFailure { append("Device re-registration failed: ${it.message}") }
+            val registerTrace = runCatching { registerDeviceTokenWithTrace(fcmToken) }
+                .getOrElse { error ->
+                    append("Device re-registration failed: ${error::class.java.simpleName}: ${error.message}")
+                    null
+                }
+            if (registerTrace != null) {
+                if (registerTrace.success) {
+                    append("Device re-registration: OK (code=${registerTrace.code ?: 200})")
+                } else {
+                    append("Device re-registration failed: code=${registerTrace.code ?: -1} error=${registerTrace.error.orEmpty()}")
+                    if (registerTrace.responseBody.isNotBlank()) {
+                        append("Register response: ${registerTrace.responseBody}")
+                    }
+                }
+            }
         } else {
             append("FCM token unavailable. Sending by known deviceId only.")
             append("Note: until Firebase token exists on device, real push delivery is impossible.")
@@ -135,6 +136,11 @@ class AndroidNotificationService(
         val preview = "FlyGram debug push ${UUID.randomUUID().toString().take(8)}"
         val body = JSONObject()
             .put("deviceIds", org.json.JSONArray().put(deviceId))
+            .apply {
+                if (!fcmToken.isNullOrBlank()) {
+                    put("fcmTokens", org.json.JSONArray().put(fcmToken))
+                }
+            }
             .put("priority", "high")
             .put(
                 "data",
@@ -202,11 +208,37 @@ class AndroidNotificationService(
             .put("messageId", messageId)
             .put("deliveredAtEpochMs", System.currentTimeMillis())
             .toString()
-        postJson(path = "/v1/push/ack", body = body)
+        val trace = postJson(path = "/v1/push/ack", body = body)
+        if (!trace.success) {
+            DebugLogStore.log(
+                "PUSH_ACK",
+                "Ack failed code=${trace.code ?: -1} url=${trace.url} error=${trace.error.orEmpty()} body=${trace.responseBody.take(200)}",
+            )
+        }
     }
 
-    private suspend fun postJson(path: String, body: String) {
-        postJsonWithTrace(path = path, body = body, tag = "PUSH_HTTP")
+    private suspend fun postJson(path: String, body: String): PostTrace {
+        return postJsonWithTrace(path = path, body = body, tag = "PUSH_HTTP")
+    }
+
+    private suspend fun registerDeviceTokenWithTrace(fcmToken: String): PostTrace {
+        val appVersion = runCatching {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName
+        }.getOrDefault("unknown")
+        val body = JSONObject()
+            .put("userId", 0)
+            .put("deviceId", deviceId)
+            .put("fcmToken", fcmToken)
+            .put("appVersion", appVersion)
+            .put("locale", context.resources.configuration.locales[0].toLanguageTag())
+            .put("capabilities", listOf("webk", "offline_r1", "proxy", "background_push"))
+            .toString()
+
+        DebugLogStore.log(
+            "PUSH_REG",
+            "Register device token requested: deviceId=$deviceId tokenPrefix=${fcmToken.take(16)}... backendCount=${backendBaseUrls.size}",
+        )
+        return postJsonWithTrace(path = "/v1/devices/register", body = body, tag = "PUSH_REG")
     }
 
     private suspend fun postJsonWithTrace(path: String, body: String, tag: String): PostTrace {
