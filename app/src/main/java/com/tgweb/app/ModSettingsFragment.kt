@@ -4,14 +4,19 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Typeface
 import android.os.Build
 import android.os.Bundle
 import android.util.TypedValue
 import android.view.View
+import android.widget.TextView
 import androidx.core.content.ContextCompat
 import androidx.preference.Preference
-import androidx.preference.PreferenceGroupAdapter
+import androidx.preference.PreferenceCategory
 import androidx.preference.PreferenceFragmentCompat
+import androidx.preference.PreferenceGroup
+import androidx.preference.PreferenceGroupAdapter
+import androidx.preference.PreferenceScreen
 import androidx.preference.SeekBarPreference
 import androidx.preference.SwitchPreferenceCompat
 import androidx.recyclerview.widget.RecyclerView
@@ -22,9 +27,12 @@ class ModSettingsFragment : PreferenceFragmentCompat() {
         requireContext().getSharedPreferences(KeepAliveService.PREFS, Context.MODE_PRIVATE)
     }
 
+    private val visiblePreferences = mutableListOf<Preference>()
+
     override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
         preferenceManager.sharedPreferencesName = KeepAliveService.PREFS
         setPreferencesFromResource(R.xml.mod_settings, rootKey)
+        rebuildVisiblePreferences()
 
         bindScalePreference()
         bindKeepAlivePreference()
@@ -47,6 +55,8 @@ class ModSettingsFragment : PreferenceFragmentCompat() {
     override fun onResume() {
         super.onResume()
         updatePushPermissionSummary()
+        rebuildVisiblePreferences()
+        listView?.post { styleVisiblePreferenceRows() }
     }
 
     private fun bindScalePreference() {
@@ -202,10 +212,107 @@ class ModSettingsFragment : PreferenceFragmentCompat() {
         ) == PackageManager.PERMISSION_GRANTED
     }
 
+    private fun rebuildVisiblePreferences() {
+        visiblePreferences.clear()
+        flattenPreferences(preferenceScreen, visiblePreferences)
+    }
+
+    private fun flattenPreferences(group: PreferenceGroup?, out: MutableList<Preference>) {
+        group ?: return
+        for (index in 0 until group.preferenceCount) {
+            val preference = group.getPreference(index)
+            if (!preference.isVisible) continue
+            out += preference
+            if (preference is PreferenceGroup && preference !is PreferenceScreen) {
+                flattenPreferences(preference, out)
+            }
+        }
+    }
+
     private fun applyExpressiveSettingsStyle() {
         val recycler = listView ?: return
         recycler.clipToPadding = false
-        recycler.setPadding(dp(14), dp(10), dp(14), dp(24))
+        recycler.setPadding(dp(14), dp(12), dp(14), dp(28))
+        recycler.itemAnimator = null
+
+        recycler.addOnScrollListener(
+            object : RecyclerView.OnScrollListener() {
+                override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+                    styleVisiblePreferenceRows()
+                }
+            },
+        )
+        recycler.addOnChildAttachStateChangeListener(
+            object : RecyclerView.OnChildAttachStateChangeListener {
+                override fun onChildViewAttachedToWindow(view: View) {
+                    stylePreferenceRow(view, recycler.getChildAdapterPosition(view))
+                }
+
+                override fun onChildViewDetachedFromWindow(view: View) = Unit
+            },
+        )
+        recycler.post { styleVisiblePreferenceRows() }
+    }
+
+    private fun styleVisiblePreferenceRows() {
+        val recycler = listView ?: return
+        for (index in 0 until recycler.childCount) {
+            val child = recycler.getChildAt(index)
+            stylePreferenceRow(child, recycler.getChildAdapterPosition(child))
+        }
+    }
+
+    private fun stylePreferenceRow(view: View, position: Int) {
+        if (position == RecyclerView.NO_POSITION) return
+        val preference = visiblePreferences.getOrNull(position) ?: return
+        val palette = UiThemeBridge.resolveSettingsPalette(requireActivity())
+        val params = view.layoutParams as? RecyclerView.LayoutParams ?: return
+
+        if (preference is PreferenceCategory) {
+            params.topMargin = if (position == 0) dp(4) else dp(18)
+            params.bottomMargin = dp(6)
+            params.marginStart = dp(6)
+            params.marginEnd = dp(6)
+            view.layoutParams = params
+            view.background = null
+            view.setPadding(dp(6), dp(6), dp(6), dp(2))
+            view.findViewById<TextView>(android.R.id.title)?.apply {
+                setTextColor(palette.onSurfaceVariant)
+                setTypeface(typeface, Typeface.BOLD)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            }
+            view.findViewById<TextView>(android.R.id.summary)?.visibility = View.GONE
+            return
+        }
+
+        val previous = visiblePreferences.getOrNull(position - 1)
+        val next = visiblePreferences.getOrNull(position + 1)
+        val topRounded = previous == null || previous is PreferenceCategory
+        val bottomRounded = next == null || next is PreferenceCategory
+        val highlighted = preference.key == KEY_AUTHOR_CHANNEL
+        params.topMargin = 0
+        params.bottomMargin = if (bottomRounded) dp(12) else 0
+        params.marginStart = 0
+        params.marginEnd = 0
+        view.layoutParams = params
+        view.background = UiThemeBridge.createSelectableGroupBackground(
+            context = requireContext(),
+            fillColor = if (highlighted) palette.primaryContainer else palette.surfaceContainerHigh,
+            strokeColor = palette.outlineVariant,
+            rippleColor = androidx.core.graphics.ColorUtils.setAlphaComponent(
+                palette.primary,
+                if (palette.isLight) 28 else 54,
+            ),
+            topRounded = topRounded,
+            bottomRounded = bottomRounded,
+        )
+        view.setPadding(dp(20), dp(8), dp(20), dp(8))
+        view.findViewById<TextView>(android.R.id.title)?.setTextColor(
+            if (highlighted) palette.onPrimaryContainer else palette.onSurface,
+        )
+        view.findViewById<TextView>(android.R.id.summary)?.setTextColor(
+            if (highlighted) palette.onPrimaryContainer else palette.onSurfaceVariant,
+        )
     }
 
     private fun dp(value: Int): Int {

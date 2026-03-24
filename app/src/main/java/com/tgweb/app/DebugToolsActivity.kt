@@ -8,38 +8,36 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.view.MenuItem
+import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
-import android.widget.Button
 import android.widget.TextView
 import android.widget.Toast
-import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.NotificationManagerCompat
 import androidx.lifecycle.lifecycleScope
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.firebase.messaging.FirebaseMessaging
 import com.tgweb.core.data.AppRepositories
 import com.tgweb.core.data.DebugLogStore
 import kotlinx.coroutines.launch
 
 class DebugToolsActivity : AppCompatActivity() {
+    private lateinit var statusText: TextView
+
     override fun onCreate(savedInstanceState: Bundle?) {
-        val surfaceColor = UiThemeBridge.resolveSettingsSurfaceColor(this)
-        setTheme(
-            if (UiThemeBridge.isLight(surfaceColor)) {
-                R.style.Theme_TGWeb_Settings_Light
-            } else {
-                R.style.Theme_TGWeb_Settings_Dark
-            },
-        )
+        UiThemeBridge.prepareSettingsTheme(this)
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_debug_tools)
-        UiThemeBridge.applyWindowColors(this, surfaceColor)
-        UiThemeBridge.applyContentContrast(findViewById(android.R.id.content), surfaceColor)
+
+        val palette = UiThemeBridge.resolveSettingsPalette(this)
+        UiThemeBridge.applyWindowColors(this, palette)
+        UiThemeBridge.applyContentContrast(findViewById(android.R.id.content), palette)
 
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
         supportActionBar?.title = getString(R.string.debug_tools_title)
 
-        val statusText = findViewById<TextView>(R.id.debugStatusText)
+        statusText = findViewById(R.id.debugStatusText)
         val testButton = findViewById<Button>(R.id.debugTestNotificationButton)
         val settingsButton = findViewById<Button>(R.id.debugOpenNotificationSettingsButton)
         val logsButton = findViewById<Button>(R.id.debugOpenLogsButton)
@@ -48,15 +46,17 @@ class DebugToolsActivity : AppCompatActivity() {
         runCatching {
             FirebaseMessaging.getInstance().token
                 .addOnSuccessListener { token ->
-                    statusText.text = buildStatus() + "\nFCM token: " + token.take(24) + "..."
+                    statusText.text = buildStatus() + "\n" +
+                        getString(R.string.debug_fcm_token_value, token.take(24))
                 }
                 .addOnFailureListener {
-                    statusText.text = buildStatus() + "\nFCM token: unavailable"
+                    statusText.text = buildStatus() + "\n" +
+                        getString(R.string.debug_fcm_token_unavailable)
                 }
         }
         testButton.setOnClickListener {
             lifecycleScope.launch {
-                statusText.text = buildStatus() + "\nPush test: sending via backend..."
+                statusText.text = buildStatus() + "\n" + getString(R.string.debug_push_test_running)
                 val result = runCatching {
                     AppRepositories.notificationService.sendServerTestPush()
                 }.getOrElse { error ->
@@ -67,8 +67,14 @@ class DebugToolsActivity : AppCompatActivity() {
                     )
                 }
 
-                statusText.text = buildStatus() +
-                    "\nPush test: " + if (result.success) "request sent" else "failed"
+                statusText.text = buildStatus() + "\n" + getString(
+                    R.string.debug_push_test_result,
+                    if (result.success) {
+                        getString(R.string.debug_push_test_sent)
+                    } else {
+                        getString(R.string.debug_push_test_failed)
+                    },
+                )
                 showLogDialog(
                     title = result.title,
                     logs = result.details,
@@ -103,19 +109,32 @@ class DebugToolsActivity : AppCompatActivity() {
     }
 
     private fun buildStatus(): String {
-        val allowed = androidx.core.app.NotificationManagerCompat.from(this).areNotificationsEnabled()
-        val keepAliveEnabled = KeepAliveService.isEnabled(this)
-        return "Notifications: ${if (allowed) "enabled" else "disabled"}\nKeep alive: ${if (keepAliveEnabled) "enabled" else "disabled"}"
+        val notificationsState = if (NotificationManagerCompat.from(this).areNotificationsEnabled()) {
+            getString(R.string.debug_notifications_enabled)
+        } else {
+            getString(R.string.debug_notifications_disabled)
+        }
+        val keepAliveState = if (KeepAliveService.isEnabled(this)) {
+            getString(R.string.debug_keep_alive_enabled)
+        } else {
+            getString(R.string.debug_keep_alive_disabled)
+        }
+        return "$notificationsState\n$keepAliveState"
     }
 
     private fun showLogDialog(title: String, logs: String, allowClear: Boolean) {
         val contentView = ScrollView(this).apply {
             val body = TextView(this@DebugToolsActivity).apply {
-                text = if (logs.isBlank()) "No logs yet." else logs
+                text = if (logs.isBlank()) getString(R.string.debug_logs_empty) else logs
                 textSize = 12f
                 typeface = Typeface.MONOSPACE
                 setTextIsSelectable(true)
-                setPadding(28, 20, 28, 20)
+                setPadding(
+                    UiThemeBridge.dp(context, 24),
+                    UiThemeBridge.dp(context, 20),
+                    UiThemeBridge.dp(context, 24),
+                    UiThemeBridge.dp(context, 20),
+                )
             }
             addView(
                 body,
@@ -126,20 +145,20 @@ class DebugToolsActivity : AppCompatActivity() {
             )
         }
 
-        AlertDialog.Builder(this)
+        MaterialAlertDialogBuilder(this)
             .setTitle(title)
             .setView(contentView)
             .setPositiveButton(R.string.debug_copy_logs) { _, _ ->
                 val manager = getSystemService(ClipboardManager::class.java)
                 manager?.setPrimaryClip(ClipData.newPlainText("flygram-debug-logs", logs))
-                Toast.makeText(this, "Logs copied", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, getString(R.string.debug_logs_copied), Toast.LENGTH_SHORT).show()
             }
             .setNegativeButton(R.string.debug_close_logs, null)
             .apply {
                 if (allowClear) {
                     setNeutralButton(R.string.debug_clear_logs) { _, _ ->
                         DebugLogStore.clear()
-                        Toast.makeText(this@DebugToolsActivity, "Logs cleared", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this@DebugToolsActivity, getString(R.string.debug_logs_cleared), Toast.LENGTH_SHORT).show()
                     }
                 }
             }

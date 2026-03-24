@@ -2,21 +2,81 @@
 <resources>
     <style name="Theme.TGWeb" parent="Theme.Material3.DayNight.NoActionBar">
         <item name="android:colorBackground">@color/tgweb_background</item>
+        <item name="android:windowBackground">@color/tgweb_background</item>
         <item name="colorPrimary">@color/tgweb_primary</item>
+        <item name="colorOnPrimary">@color/tgweb_on_primary</item>
+        <item name="colorPrimaryContainer">@color/tgweb_primary_container</item>
+        <item name="colorOnPrimaryContainer">@color/tgweb_on_primary_container</item>
+        <item name="colorSurface">@color/tgweb_surface</item>
+        <item name="colorOnSurface">@color/tgweb_on_surface</item>
+        <item name="colorOnSurfaceVariant">@color/tgweb_on_surface_variant</item>
     </style>
 
-    <style name="Theme.TGWeb.Settings" parent="Theme.Material3.DayNight">
-        <item name="colorPrimary">@color/tgweb_primary</item>
+    <style name="Base.Theme.TGWeb.Settings" parent="Theme.Material3.DayNight">
+        <item name="actionBarStyle">@style/Widget.TGWeb.Settings.ActionBar</item>
+        <item name="actionBarTheme">@style/ThemeOverlay.TGWeb.Settings.ActionBar</item>
+        <item name="toolbarStyle">@style/Widget.TGWeb.Settings.Toolbar</item>
+        <item name="materialToolbarStyle">@style/Widget.TGWeb.Settings.Toolbar</item>
+        <item name="materialButtonStyle">@style/Widget.TGWeb.Settings.Button</item>
+        <item name="materialCardViewStyle">@style/Widget.TGWeb.Settings.Card</item>
+        <item name="preferenceTheme">@style/PreferenceThemeOverlay.TGWeb.Settings</item>
+        <item name="android:listDivider">@android:color/transparent</item>
+        <item name="listDivider">@android:color/transparent</item>
+        <item name="android:windowBackground">?android:colorBackground</item>
+        <item name="android:navigationBarColor">?attr/colorSurface</item>
+        <item name="android:statusBarColor">?attr/colorSurface</item>
+        <item name="colorControlHighlight">?attr/colorPrimaryContainer</item>
+        <item name="colorSecondary">?attr/colorPrimary</item>
+    </style>
+
+    <style name="Theme.TGWeb.Settings" parent="Base.Theme.TGWeb.Settings">
         <item name="android:colorBackground">@color/tgweb_background</item>
+        <item name="colorPrimary">@color/tgweb_primary</item>
+        <item name="colorOnPrimary">@color/tgweb_on_primary</item>
+        <item name="colorPrimaryContainer">@color/tgweb_primary_container</item>
+        <item name="colorOnPrimaryContainer">@color/tgweb_on_primary_container</item>
+        <item name="colorSecondaryContainer">@color/tgweb_secondary_container</item>
+        <item name="colorOnSecondaryContainer">@color/tgweb_on_secondary_container</item>
+        <item name="colorSurface">@color/tgweb_surface</item>
+        <item name="colorSurfaceContainer">@color/tgweb_surface_container</item>
+        <item name="colorSurfaceContainerHigh">@color/tgweb_surface_container_high</item>
+        <item name="colorOnSurface">@color/tgweb_on_surface</item>
+        <item name="colorOnSurfaceVariant">@color/tgweb_on_surface_variant</item>
+        <item name="colorOutline">@color/tgweb_outline</item>
+        <item name="colorOutlineVariant">@color/tgweb_outline_variant</item>
     </style>
 
-    <style name="Theme.TGWeb.Settings.Light" parent="Theme.Material3.Light">
-        <item name="colorPrimary">@color/tgweb_primary</item>
+    <style name="Theme.TGWeb.Settings.Light" parent="Base.Theme.TGWeb.Settings">
         <item name="android:colorBackground">@color/tgweb_background</item>
+        <item name="colorPrimary">@color/tgweb_primary</item>
+        <item name="colorOnPrimary">@color/tgweb_on_primary</item>
+        <item name="colorPrimaryContainer">@color/tgweb_primary_container</item>
+        <item name="colorOnPrimaryContainer">@color/tgweb_on_primary_container</item>
+        <item name="colorSecondaryContainer">@color/tgweb_secondary_container</item>
+        <item name="colorOnSecondaryContainer">@color/tgweb_on_secondary_container</item>
+        <item name="colorSurface">@color/tgweb_surface</item>
+        <item name="colorSurfaceContainer">@color/tgweb_surface_container</item>
+        <item name="colorSurfaceContainerHigh">@color/tgweb_surface_container_high</item>
+        <item name="colorOnSurface">@color/tgweb_on_surface</item>
+        <item name="colorOnSurfaceVariant">@color/tgweb_on_surface_variant</item>
+        <item name="colorOutline">@color/tgweb_outline</item>
+        <item name="colorOutlineVariant">@color/tgweb_outline_variant</item>
     </style>
 
-    <style name="Theme.TGWeb.Settings.Dark" parent="Theme.Material3.Dark">
-        <item name="colorPrimary">@color/tgweb_primary</item>
-        <item name="android:colorBackground">#0E1621</item>
+    <style name="Theme.TGWeb.Settings.Dark" parent="Base.Theme.TGWeb.Settings">
+        <item name="android:colorBackground">@color/tgweb_background_dark</item>
+        <item name="colorPrimary">@color/tgweb_primary_dark</item>
+        <item name="colorOnPrimary">@color/tgweb_on_primary_dark</item>
+        <item name="colorPrimaryContainer">@color/tgweb_primary_container_dark</item>
+        <item name="colorOnPrimaryContainer">@color/tgweb_on_primary_container_dark</item>
+        <item name="colorSecondaryContainer">@color/tgweb_secondary_container_dark</item>
+        <item name="colorOnSecondaryContainer">@color/tgweb_on_secondary_container_dark</item>
+        <item name="colorSurface">@color/tgweb_surface_dark</item>
+        <item name="colorSurfaceContainer">@color/tgweb_surface_container_dark</item>
+        <item name="colorSurfaceContainerHigh">@color/tgweb_surface_container_high_dark</item>
+        <item name="colorOnSurface">@color/tgweb_on_surface_dark</item>
+        <item name="colorOnSurfaceVariant">@color/tgweb_on_surface_variant_dark</item>
+        <item name="colorOutline">@color/tgweb_outline_dark</item>
+        <item name="colorOutlineVariant">@color/tgweb_outline_variant_dark</item>
     </style>
 </resources>

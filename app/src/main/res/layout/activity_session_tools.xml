@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+<androidx.core.widget.NestedScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:fillViewport="true">
@@ -8,63 +9,150 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="16dp">
+        android:paddingStart="20dp"
+        android:paddingTop="18dp"
+        android:paddingEnd="20dp"
+        android:paddingBottom="28dp">
 
-        <TextView
-            android:id="@+id/sessionToolsDescription"
+        <com.google.android.material.card.MaterialCardView
+            style="@style/Widget.TGWeb.Settings.HeroCard"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="24dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/mod_session_tools_title"
+                    android:textAppearance="@style/TextAppearance.TGWeb.Settings.Eyebrow" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:text="@string/session_tools_title"
+                    android:textAppearance="@style/TextAppearance.TGWeb.Settings.HeroTitle" />
+
+                <TextView
+                    android:id="@+id/sessionToolsDescription"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:text="@string/session_tools_description"
+                    android:textAppearance="@style/TextAppearance.TGWeb.Settings.HeroBody" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <com.google.android.material.card.MaterialCardView
+            style="@style/Widget.TGWeb.Settings.Card"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="@string/session_tools_description"
-            android:textSize="14sp" />
+            android:layout_marginTop="18dp">
 
-        <TextView
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="22dp">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/session_tools_import_title"
+                    android:textAppearance="@style/TextAppearance.TGWeb.Settings.SectionTitle" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="@string/mod_session_tools_summary"
+                    android:textAppearance="@style/TextAppearance.TGWeb.Settings.SectionBody" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/importSessionButton"
+                    style="@style/Widget.TGWeb.Settings.Button"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    android:text="@string/session_tools_import_session" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/importTdataButton"
+                    style="@style/Widget.TGWeb.Settings.Button.Outlined"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:text="@string/session_tools_import_tdata" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <com.google.android.material.card.MaterialCardView
+            style="@style/Widget.TGWeb.Settings.Card"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="18dp"
-            android:text="@string/session_tools_import_title"
-            android:textStyle="bold" />
+            android:layout_marginTop="16dp">
 
-        <Button
-            android:id="@+id/importSessionButton"
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="22dp">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/session_tools_export_title"
+                    android:textAppearance="@style/TextAppearance.TGWeb.Settings.SectionTitle" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/exportSessionButton"
+                    style="@style/Widget.TGWeb.Settings.Button.Tonal"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    android:text="@string/session_tools_export_session" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/exportTdataButton"
+                    style="@style/Widget.TGWeb.Settings.Button.Outlined"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:text="@string/session_tools_export_tdata" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <com.google.android.material.card.MaterialCardView
+            style="@style/Widget.TGWeb.Settings.Card"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
-            android:text="@string/session_tools_import_session" />
+            android:layout_marginTop="16dp">
 
-        <Button
-            android:id="@+id/importTdataButton"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
-            android:text="@string/session_tools_import_tdata" />
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="22dp">
 
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="22dp"
-            android:text="@string/session_tools_export_title"
-            android:textStyle="bold" />
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/session_tools_status_title"
+                    android:textAppearance="@style/TextAppearance.TGWeb.Settings.SectionTitle" />
 
-        <Button
-            android:id="@+id/exportSessionButton"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
-            android:text="@string/session_tools_export_session" />
-
-        <Button
-            android:id="@+id/exportTdataButton"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
-            android:text="@string/session_tools_export_tdata" />
-
-        <TextView
-            android:id="@+id/sessionStatusText"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="20dp"
-            android:text="@string/session_tools_idle"
-            android:textStyle="bold" />
+                <TextView
+                    android:id="@+id/sessionStatusText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:text="@string/session_tools_idle"
+                    android:textAppearance="@style/TextAppearance.TGWeb.Settings.Status" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
     </LinearLayout>
-</ScrollView>
+</androidx.core.widget.NestedScrollView>

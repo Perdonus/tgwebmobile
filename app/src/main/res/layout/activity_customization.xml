@@ -1,95 +1,208 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+<androidx.core.widget.NestedScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
-    android:layout_height="match_parent">
+    android:layout_height="match_parent"
+    android:fillViewport="true">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="16dp">
+        android:paddingStart="20dp"
+        android:paddingTop="18dp"
+        android:paddingEnd="20dp"
+        android:paddingBottom="28dp">
 
-        <TextView
+        <com.google.android.material.card.MaterialCardView
+            style="@style/Widget.TGWeb.Settings.HeroCard"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="24dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/mod_customization_title"
+                    android:textAppearance="@style/TextAppearance.TGWeb.Settings.Eyebrow" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:text="@string/customization_title"
+                    android:textAppearance="@style/TextAppearance.TGWeb.Settings.HeroTitle" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:text="@string/customization_hint"
+                    android:textAppearance="@style/TextAppearance.TGWeb.Settings.HeroBody" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <com.google.android.material.card.MaterialCardView
+            style="@style/Widget.TGWeb.Settings.Card"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="@string/customization_hint"
-            android:textSize="14sp" />
+            android:layout_marginTop="18dp">
 
-        <Switch
-            android:id="@+id/customMd3Switch"
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="22dp">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/customization_section_appearance"
+                    android:textAppearance="@style/TextAppearance.TGWeb.Settings.SectionTitle" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/customMd3Switch"
+                    style="@style/Widget.TGWeb.Settings.Toggle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    android:text="@string/custom_md3_effects" />
+
+                <TextView
+                    android:id="@+id/customContainerStyleTitle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="18dp"
+                    android:text="@string/custom_container_style"
+                    android:textAppearance="@style/TextAppearance.TGWeb.Settings.SectionLabel" />
+
+                <com.google.android.material.textfield.TextInputLayout
+                    android:id="@+id/customContainerStyleField"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:hint="@string/custom_container_style"
+                    app:boxBackgroundMode="filled"
+                    app:endIconMode="dropdown_menu">
+
+                    <com.google.android.material.textfield.MaterialAutoCompleteTextView
+                        android:id="@+id/customContainerStyleSpinner"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:focusable="false"
+                        android:inputType="none" />
+                </com.google.android.material.textfield.TextInputLayout>
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/customMd3HideBasePlatesSwitch"
+                    style="@style/Widget.TGWeb.Settings.Toggle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    android:text="@string/custom_md3_hide_base_plates" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/customDynamicColorSwitch"
+                    style="@style/Widget.TGWeb.Settings.Toggle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:text="@string/custom_dynamic_color" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <com.google.android.material.card.MaterialCardView
+            style="@style/Widget.TGWeb.Settings.Card"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="14dp"
-            android:text="@string/custom_md3_effects" />
+            android:layout_marginTop="16dp">
 
-        <TextView
-            android:id="@+id/customContainerStyleTitle"
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="22dp">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/customization_section_behavior"
+                    android:textAppearance="@style/TextAppearance.TGWeb.Settings.SectionTitle" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/customReplyAutoFocusSwitch"
+                    style="@style/Widget.TGWeb.Settings.Toggle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    android:text="@string/custom_reply_auto_focus" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <com.google.android.material.card.MaterialCardView
+            style="@style/Widget.TGWeb.Settings.Card"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:text="@string/custom_container_style"
-            android:textStyle="bold" />
+            android:layout_marginTop="16dp">
 
-        <Spinner
-            android:id="@+id/customContainerStyleSpinner"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp" />
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="22dp">
 
-        <Switch
-            android:id="@+id/customMd3HideBasePlatesSwitch"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
-            android:text="@string/custom_md3_hide_base_plates" />
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/customization_section_sidebar"
+                    android:textAppearance="@style/TextAppearance.TGWeb.Settings.SectionTitle" />
 
-        <Switch
-            android:id="@+id/customDynamicColorSwitch"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
-            android:text="@string/custom_dynamic_color" />
+                <TextView
+                    android:id="@+id/customMenuDownloadsPositionTitle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"
+                    android:text="@string/custom_menu_downloads_position"
+                    android:textAppearance="@style/TextAppearance.TGWeb.Settings.SectionLabel" />
 
-        <Switch
-            android:id="@+id/customReplyAutoFocusSwitch"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
-            android:text="@string/custom_reply_auto_focus" />
+                <com.google.android.material.textfield.TextInputLayout
+                    android:id="@+id/customMenuDownloadsPositionField"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:hint="@string/custom_menu_downloads_position"
+                    app:boxBackgroundMode="filled"
+                    app:endIconMode="dropdown_menu">
 
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="18dp"
-            android:text="@string/custom_sidebar_menu_title"
-            android:textStyle="bold" />
+                    <com.google.android.material.textfield.MaterialAutoCompleteTextView
+                        android:id="@+id/customMenuDownloadsPositionSpinner"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:focusable="false"
+                        android:inputType="none" />
+                </com.google.android.material.textfield.TextInputLayout>
 
-        <TextView
-            android:id="@+id/customMenuDownloadsPositionTitle"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:text="@string/custom_menu_downloads_position"
-            android:textStyle="bold" />
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/customMenuShowDividersSwitch"
+                    style="@style/Widget.TGWeb.Settings.Toggle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    android:text="@string/custom_menu_show_dividers" />
 
-        <Spinner
-            android:id="@+id/customMenuDownloadsPositionSpinner"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp" />
-
-        <Switch
-            android:id="@+id/customMenuShowDividersSwitch"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:text="@string/custom_menu_show_dividers" />
-
-        <Switch
-            android:id="@+id/customMenuHideMoreSwitch"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:text="@string/custom_menu_hide_more" />
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/customMenuHideMoreSwitch"
+                    style="@style/Widget.TGWeb.Settings.Toggle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:text="@string/custom_menu_hide_more" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
     </LinearLayout>
-</ScrollView>
+</androidx.core.widget.NestedScrollView>

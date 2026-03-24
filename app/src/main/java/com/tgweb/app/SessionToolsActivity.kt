@@ -44,18 +44,12 @@ class SessionToolsActivity : AppCompatActivity() {
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        val surfaceColor = UiThemeBridge.resolveSettingsSurfaceColor(this)
-        setTheme(
-            if (UiThemeBridge.isLight(surfaceColor)) {
-                R.style.Theme_TGWeb_Settings_Light
-            } else {
-                R.style.Theme_TGWeb_Settings_Dark
-            },
-        )
+        UiThemeBridge.prepareSettingsTheme(this)
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_session_tools)
-        UiThemeBridge.applyWindowColors(this, surfaceColor)
-        UiThemeBridge.applyContentContrast(findViewById(android.R.id.content), surfaceColor)
+        val palette = UiThemeBridge.resolveSettingsPalette(this)
+        UiThemeBridge.applyWindowColors(this, palette)
+        UiThemeBridge.applyContentContrast(findViewById(android.R.id.content), palette)
 
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
         supportActionBar?.title = getString(R.string.session_tools_title)

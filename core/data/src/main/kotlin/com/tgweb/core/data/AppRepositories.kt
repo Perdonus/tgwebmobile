@@ -5,11 +5,23 @@ import com.tgweb.core.webbridge.BridgeEventTypes
 import com.tgweb.core.webbridge.ProxyConfigSnapshot
 import com.tgweb.core.webbridge.WebBootstrapSnapshot
 import com.tgweb.core.webbridge.WebBridgeContract
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Lightweight service locator for workers/services that are created by the Android framework.
  */
 object AppRepositories {
+    data class DownloadStatusSnapshot(
+        val fileId: String,
+        val displayName: String,
+        val mimeType: String,
+        val expectedBytes: Long,
+        val percent: Int,
+        val localUri: String?,
+        val error: String?,
+        val updatedAt: Long,
+    )
+
     lateinit var chatRepository: ChatRepository
     lateinit var mediaRepository: MediaRepository
     lateinit var notificationService: NotificationService
@@ -29,6 +41,8 @@ object AppRepositories {
     @Volatile
     private var interfaceScalePercent: Int = 100
 
+    private val downloadStates = ConcurrentHashMap<String, DownloadStatusSnapshot>()
+
     fun postPushMessageReceived(chatId: Long, messageId: Long, preview: String) {
         if (!::webBridge.isInitialized) return
         webBridge.postToWeb(
@@ -43,7 +57,50 @@ object AppRepositories {
         )
     }
 
-    fun postDownloadProgress(fileId: String, percent: Int, localUri: String? = null, error: String? = null) {
+    fun registerDownload(
+        fileId: String,
+        displayName: String,
+        mimeType: String = "application/octet-stream",
+        expectedBytes: Long = 0L,
+    ) {
+        val current = downloadStates[fileId]
+        downloadStates[fileId] = DownloadStatusSnapshot(
+            fileId = fileId,
+            displayName = displayName.ifBlank { current?.displayName ?: fileId },
+            mimeType = mimeType.ifBlank { current?.mimeType ?: "application/octet-stream" },
+            expectedBytes = expectedBytes.takeIf { it > 0L } ?: current?.expectedBytes ?: 0L,
+            percent = current?.percent ?: 0,
+            localUri = current?.localUri,
+            error = current?.error,
+            updatedAt = System.currentTimeMillis(),
+        )
+    }
+
+    fun getDownloadStatuses(): List<DownloadStatusSnapshot> {
+        return downloadStates.values
+            .sortedByDescending { it.updatedAt }
+    }
+
+    fun postDownloadProgress(
+        fileId: String,
+        percent: Int,
+        localUri: String? = null,
+        error: String? = null,
+        displayName: String? = null,
+        mimeType: String? = null,
+        expectedBytes: Long? = null,
+    ) {
+        val current = downloadStates[fileId]
+        downloadStates[fileId] = DownloadStatusSnapshot(
+            fileId = fileId,
+            displayName = displayName?.ifBlank { null } ?: current?.displayName ?: fileId,
+            mimeType = mimeType?.ifBlank { null } ?: current?.mimeType ?: "application/octet-stream",
+            expectedBytes = expectedBytes?.takeIf { it > 0L } ?: current?.expectedBytes ?: 0L,
+            percent = percent.coerceIn(0, 100),
+            localUri = localUri ?: current?.localUri,
+            error = error,
+            updatedAt = System.currentTimeMillis(),
+        )
         if (!::webBridge.isInitialized) return
         DebugLogStore.log(
             "DOWNLOAD_EVT",

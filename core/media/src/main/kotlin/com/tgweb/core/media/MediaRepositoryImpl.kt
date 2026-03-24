@@ -3,11 +3,15 @@ package com.tgweb.core.media
 import android.content.ContentValues
 import android.content.Context
 import android.net.Uri
+import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import android.util.Base64
 import android.webkit.CookieManager
 import android.webkit.URLUtil
 import android.webkit.WebSettings
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.tgweb.core.data.AppRepositories
@@ -19,7 +23,9 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.io.BufferedOutputStream
 import java.io.File
+import java.io.FileOutputStream
 import java.io.RandomAccessFile
 import java.net.HttpURLConnection
 import java.net.InetSocketAddress
@@ -31,6 +37,10 @@ class MediaRepositoryImpl(
     private val context: Context,
     private val cacheManager: MediaCacheManager,
 ) : MediaRepository {
+
+    init {
+        ensureDownloadChannel()
+    }
 
     private data class ContentRangeInfo(
         val start: Long,
@@ -54,6 +64,19 @@ class MediaRepositoryImpl(
         val mimeType: String,
         val fileName: String?,
         val complete: Boolean,
+    )
+
+    private class BridgeTransferState(
+        val transferId: String,
+        val fileId: String,
+        val tempFile: File,
+        var fileName: String?,
+        var mimeType: String,
+        var expectedBytes: Long,
+        val sourceUrl: String?,
+        val output: BufferedOutputStream,
+        var writtenBytes: Long = 0L,
+        var lastPercent: Int = -1,
     )
 
     override suspend fun getMediaFile(fileId: String): Result<String> {
@@ -148,6 +171,12 @@ class MediaRepositoryImpl(
             )
             val finalFileName = chooseFileName(provided = fileName, detected = headerName)
             val contentLength = connection.contentLengthLong.coerceAtLeast(0L)
+            AppRepositories.registerDownload(
+                fileId = fileId,
+                displayName = finalFileName,
+                mimeType = resolvedMime,
+                expectedBytes = contentLength,
+            )
             DebugLogStore.log(
                 "DOWNLOAD_HTTP",
                 "Resolved file fileId=$fileId finalName=$finalFileName provided=${fileName.orEmpty()} detected=$headerName mime=$resolvedMime len=$contentLength",
@@ -200,6 +229,157 @@ class MediaRepositoryImpl(
             AppRepositories.postDownloadProgress(fileId = fileId, percent = 0, error = "download_failed")
             showDownloadNotification(fileId, fileName ?: fileId, 0, inProgress = false, failed = true)
         }
+    }
+
+    override suspend fun beginBridgeDownload(
+        transferId: String,
+        fileId: String,
+        fileName: String?,
+        mimeType: String,
+        expectedSizeBytes: Long,
+        sourceUrl: String?,
+    ): Result<Unit> = runCatching {
+        require(transferId.isNotBlank()) { "transferId is blank" }
+        require(fileId.isNotBlank()) { "fileId is blank" }
+
+        val tempFile = File(context.cacheDir, "flygram_bridge_${transferId.hashCode()}_${System.currentTimeMillis()}.tmp")
+        tempFile.parentFile?.mkdirs()
+
+        val existing = synchronized(bridgeTransferLock) {
+            bridgeTransfers.remove(transferId)
+        }
+        existing?.let { cleanupBridgeTransfer(it, deleteTemp = true) }
+
+        val state = BridgeTransferState(
+            transferId = transferId,
+            fileId = fileId,
+            tempFile = tempFile,
+            fileName = fileName,
+            mimeType = mimeType,
+            expectedBytes = expectedSizeBytes.coerceAtLeast(0L),
+            sourceUrl = sourceUrl,
+            output = BufferedOutputStream(FileOutputStream(tempFile, false)),
+        )
+        synchronized(bridgeTransferLock) {
+            bridgeTransfers[transferId] = state
+        }
+
+        DebugLogStore.log(
+            "DOWNLOAD_BRIDGE",
+            "begin transferId=$transferId fileId=$fileId name=${fileName.orEmpty()} mime=$mimeType expected=$expectedSizeBytes url=${sourceUrl.orEmpty().take(240)}",
+        )
+        AppRepositories.registerDownload(
+            fileId = fileId,
+            displayName = fileName ?: fileId,
+            mimeType = mimeType,
+            expectedBytes = expectedSizeBytes,
+        )
+        AppRepositories.postDownloadProgress(
+            fileId = fileId,
+            percent = 0,
+            displayName = fileName ?: fileId,
+            mimeType = mimeType,
+            expectedBytes = expectedSizeBytes,
+        )
+        showDownloadNotification(fileId, fileName ?: fileId, 0, inProgress = true)
+    }
+
+    override suspend fun appendBridgeDownloadChunk(
+        transferId: String,
+        base64Chunk: String,
+    ): Result<Int> = runCatching {
+        val state = synchronized(bridgeTransferLock) {
+            bridgeTransfers[transferId]
+        } ?: error("Unknown transferId=$transferId")
+
+        val bytes = Base64.decode(base64Chunk, Base64.DEFAULT)
+        require(bytes.isNotEmpty()) { "Decoded chunk is empty" }
+
+        val progressState = synchronized(state) {
+            state.output.write(bytes)
+            state.writtenBytes += bytes.size.toLong()
+            maybeEmitBridgeProgress(state)
+            state.writtenBytes
+        }
+        if (progressState == bytes.size.toLong()) {
+            DebugLogStore.log(
+                "DOWNLOAD_BRIDGE",
+                "first chunk transferId=$transferId fileId=${state.fileId} bytes=${bytes.size}",
+            )
+        }
+        bytes.size
+    }
+
+    override suspend fun finishBridgeDownload(transferId: String): Result<String> = runCatching {
+        val state = synchronized(bridgeTransferLock) {
+            bridgeTransfers.remove(transferId)
+        } ?: error("Unknown transferId=$transferId")
+
+        synchronized(state) {
+            state.output.flush()
+            state.output.close()
+        }
+
+        val actualBytes = state.tempFile.length().coerceAtLeast(state.writtenBytes)
+        if (actualBytes <= 0L) {
+            cleanupBridgeTransfer(state, deleteTemp = true)
+            error("Bridge download is empty")
+        }
+
+        val oldPath = cacheManager.resolve(state.fileId)
+        val detectedName = state.sourceUrl?.let {
+            URLUtil.guessFileName(it, null, state.mimeType)
+        }.orEmpty()
+        val finalName = chooseFileName(state.fileName, detectedName)
+        val finalMime = resolveMimeType(
+            requested = state.mimeType,
+            detected = URLConnectionGuesser.mimeFromFileName(finalName),
+        )
+
+        val finalPath = state.tempFile.inputStream().use { input ->
+            cacheManager.cache(
+                fileId = state.fileId,
+                mimeType = finalMime,
+                bytes = state.expectedBytes.takeIf { it > 0L } ?: actualBytes,
+                source = input,
+                isPinned = false,
+                fileName = finalName,
+            )
+        }
+
+        if (!oldPath.isNullOrBlank() && oldPath != finalPath) {
+            runCatching { File(oldPath).delete() }
+        }
+        state.tempFile.delete()
+
+        DebugLogStore.log(
+            "DOWNLOAD_BRIDGE",
+            "finish transferId=$transferId fileId=${state.fileId} path=$finalPath bytes=$actualBytes",
+        )
+        AppRepositories.postDownloadProgress(fileId = state.fileId, percent = 100, localUri = finalPath)
+        showDownloadNotification(state.fileId, finalName, 100, inProgress = false)
+        finalPath
+    }.onFailure {
+        DebugLogStore.logError("DOWNLOAD_BRIDGE", "finish failed transferId=$transferId", it)
+    }
+
+    override suspend fun cancelBridgeDownload(transferId: String, reason: String?): Boolean {
+        val state = synchronized(bridgeTransferLock) {
+            bridgeTransfers.remove(transferId)
+        } ?: return false
+
+        cleanupBridgeTransfer(state, deleteTemp = true)
+        DebugLogStore.log(
+            "DOWNLOAD_BRIDGE",
+            "cancel transferId=$transferId fileId=${state.fileId} reason=${reason.orEmpty()}",
+        )
+        AppRepositories.postDownloadProgress(
+            fileId = state.fileId,
+            percent = 0,
+            error = reason ?: "download_cancelled",
+        )
+        showDownloadNotification(state.fileId, state.fileName ?: state.fileId, 0, inProgress = false, failed = true)
+        return true
     }
 
     override suspend fun prefetch(chatId: Long, window: Int) {
@@ -507,6 +687,40 @@ class MediaRepositoryImpl(
         }
     }
 
+    private fun maybeEmitBridgeProgress(state: BridgeTransferState) {
+        val percent = when {
+            state.expectedBytes > 0L -> ((state.writtenBytes * 100) / state.expectedBytes).toInt().coerceIn(0, 99)
+            state.writtenBytes > 0L -> 1
+            else -> 0
+        }
+        val shouldPost = state.lastPercent < 0 ||
+            percent >= 99 ||
+            percent - state.lastPercent >= 4
+        if (!shouldPost) return
+
+        state.lastPercent = percent
+        AppRepositories.postDownloadProgress(fileId = state.fileId, percent = percent)
+        showDownloadNotification(state.fileId, state.fileName ?: state.fileId, percent, inProgress = true)
+        if (percent == 1 || percent >= 99 || percent % 20 == 0) {
+            DebugLogStore.log(
+                "DOWNLOAD_BRIDGE",
+                "progress fileId=${state.fileId} percent=$percent written=${state.writtenBytes}/${state.expectedBytes}",
+            )
+        }
+    }
+
+    private fun cleanupBridgeTransfer(state: BridgeTransferState, deleteTemp: Boolean) {
+        runCatching {
+            synchronized(state) {
+                state.output.flush()
+                state.output.close()
+            }
+        }
+        if (deleteTemp) {
+            runCatching { state.tempFile.delete() }
+        }
+    }
+
     private fun chooseFileName(provided: String?, detected: String): String {
         val providedClean = provided?.trim().orEmpty()
         val detectedClean = detected.trim()
@@ -658,6 +872,20 @@ class MediaRepositoryImpl(
         NotificationManagerCompat.from(context).notify(fileId.hashCode(), builder.build())
     }
 
+    private fun ensureDownloadChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val manager = context.getSystemService(NotificationManager::class.java) ?: return
+        val channel = NotificationChannel(
+            DOWNLOAD_CHANNEL_ID,
+            "FlyGram downloads",
+            NotificationManager.IMPORTANCE_LOW,
+        ).apply {
+            description = "Shows file download progress and completion state."
+            setShowBadge(false)
+        }
+        manager.createNotificationChannel(channel)
+    }
+
     companion object {
         private const val CONNECT_TIMEOUT_MS = 30_000
         private const val READ_TIMEOUT_MS = 60_000
@@ -674,4 +902,26 @@ class MediaRepositoryImpl(
     private val segmentStates = mutableMapOf<String, SegmentAccumulator>()
     private val segmentFinalizeJobs = mutableMapOf<String, Job>()
     private val segmentScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val bridgeTransferLock = Any()
+    private val bridgeTransfers = mutableMapOf<String, BridgeTransferState>()
+
+    private object URLConnectionGuesser {
+        fun mimeFromFileName(fileName: String): String {
+            val lower = fileName.lowercase()
+            return when {
+                lower.endsWith(".jpg") || lower.endsWith(".jpeg") -> "image/jpeg"
+                lower.endsWith(".png") -> "image/png"
+                lower.endsWith(".gif") -> "image/gif"
+                lower.endsWith(".webp") -> "image/webp"
+                lower.endsWith(".mp4") -> "video/mp4"
+                lower.endsWith(".webm") -> "video/webm"
+                lower.endsWith(".mp3") -> "audio/mpeg"
+                lower.endsWith(".ogg") -> "audio/ogg"
+                lower.endsWith(".pdf") -> "application/pdf"
+                lower.endsWith(".zip") -> "application/zip"
+                lower.endsWith(".txt") -> "text/plain"
+                else -> "application/octet-stream"
+            }
+        }
+    }
 }

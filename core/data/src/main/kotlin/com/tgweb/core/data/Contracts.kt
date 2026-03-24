@@ -14,6 +14,20 @@ interface ChatRepository {
 interface MediaRepository {
     suspend fun getMediaFile(fileId: String): Result<String>
     suspend fun cacheRemoteFile(fileId: String, url: String, mimeType: String, fileName: String?): Result<String>
+    suspend fun beginBridgeDownload(
+        transferId: String,
+        fileId: String,
+        fileName: String?,
+        mimeType: String,
+        expectedSizeBytes: Long,
+        sourceUrl: String?,
+    ): Result<Unit>
+    suspend fun appendBridgeDownloadChunk(
+        transferId: String,
+        base64Chunk: String,
+    ): Result<Int>
+    suspend fun finishBridgeDownload(transferId: String): Result<String>
+    suspend fun cancelBridgeDownload(transferId: String, reason: String?): Boolean
     suspend fun prefetch(chatId: Long, window: Int)
     suspend fun downloadToPublicStorage(fileId: String, targetCollection: String): Result<String>
     suspend fun removeCachedFile(fileId: String): Boolean

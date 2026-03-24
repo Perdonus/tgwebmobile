@@ -63,6 +63,8 @@
     <string name="proxy_delete">Удалить</string>
 
     <string name="downloads_title">Загрузки</string>
+    <string name="downloads_overview_body">Здесь собраны файлы, которые уже находятся в локальном кеше FlyGram и готовы к экспорту на устройство.</string>
+    <string name="downloads_library_title">Файлы в кеше</string>
     <string name="downloads_refresh">Обновить список</string>
     <string name="downloads_empty">Кеш загрузок пока пуст</string>
     <string name="downloads_action_export">Сохранить в Downloads/flygram_downloads</string>
@@ -76,6 +78,7 @@
     <string name="session_tools_description">Инструменты для переноса профиля FlyGram Web. Импорт применяется после перезапуска приложения.</string>
     <string name="session_tools_import_title">Импорт</string>
     <string name="session_tools_export_title">Экспорт</string>
+    <string name="session_tools_status_title">Статус</string>
     <string name="session_tools_import_session">Импорт Session backup</string>
     <string name="session_tools_import_tdata">Импорт tdata backup</string>
     <string name="session_tools_export_session">Экспорт Session backup</string>
@@ -94,6 +97,9 @@
 
     <string name="customization_title">Кастомизация</string>
     <string name="customization_hint">Настройки применяются к web-интерфейсу и сохраняются локально.</string>
+    <string name="customization_section_appearance">Внешний вид</string>
+    <string name="customization_section_behavior">Поведение</string>
+    <string name="customization_section_sidebar">Боковое меню</string>
     <string name="custom_hide_stories">Скрыть Stories в интерфейсе</string>
     <string name="custom_md3_effects">MD3-эффекты (скругления и контейнеры)</string>
     <string name="custom_md3_hide_base_plates">Скрывать базовые плашки под MD3 (экспериментально)</string>
@@ -110,13 +116,32 @@
     <string name="custom_menu_hide_more">Скрывать пункт &quot;More / Ещё&quot;</string>
     <string name="proxy_copy_logs">Скопировать логи прокси</string>
     <string name="proxy_logs_copied">Логи прокси скопированы</string>
+    <string name="proxy_overview_title">Подключение</string>
+    <string name="proxy_overview_body">Сохраняй несколько профилей и быстро переключайся между ними. Пинг обновляется автоматически.</string>
+    <string name="proxy_profiles_title">Профили</string>
+    <string name="proxy_actions_title">Действия</string>
 
-    <string name="debug_tools_title">Debug tools</string>
-    <string name="debug_test_notification">Тест уведомлений</string>
-    <string name="debug_open_notification_settings">Открыть настройки уведомлений</string>
+    <string name="debug_tools_title">Отладка и диагностика</string>
+    <string name="debug_status_title">Состояние</string>
+    <string name="debug_actions_title">Действия</string>
+    <string name="debug_test_notification">Отправить тестовое уведомление</string>
+    <string name="debug_open_notification_settings">Настройки уведомлений</string>
     <string name="debug_open_logs">Логи сети и прокси</string>
     <string name="debug_logs_title">FlyGram Debug Logs</string>
     <string name="debug_copy_logs">Скопировать</string>
     <string name="debug_clear_logs">Очистить</string>
     <string name="debug_close_logs">Закрыть</string>
+    <string name="debug_logs_empty">Логи пока пусты.</string>
+    <string name="debug_logs_copied">Логи скопированы</string>
+    <string name="debug_logs_cleared">Логи очищены</string>
+    <string name="debug_notifications_enabled">Уведомления: включены</string>
+    <string name="debug_notifications_disabled">Уведомления: выключены</string>
+    <string name="debug_keep_alive_enabled">Keep alive: включён</string>
+    <string name="debug_keep_alive_disabled">Keep alive: выключен</string>
+    <string name="debug_fcm_token_value">FCM token: %1$s...</string>
+    <string name="debug_fcm_token_unavailable">FCM token: недоступен</string>
+    <string name="debug_push_test_running">Проверка: отправка тестового push…</string>
+    <string name="debug_push_test_result">Проверка: %1$s</string>
+    <string name="debug_push_test_sent">запрос отправлен</string>
+    <string name="debug_push_test_failed">ошибка</string>
 </resources>

@@ -142,6 +142,54 @@ class MainApplication : Application() {
                             }
                         }
                     }
+                    BridgeCommandTypes.DOWNLOAD_FILE_BEGIN -> {
+                        val transferId = command.payload["transferId"].orEmpty()
+                        val fileId = command.payload["fileId"].orEmpty()
+                        val mime = command.payload["mime"].orEmpty()
+                        val name = command.payload["name"]
+                        val sizeBytes = command.payload["sizeBytes"]?.toLongOrNull() ?: -1L
+                        val sourceUrl = command.payload["url"]
+                        DebugLogStore.log(
+                            "DOWNLOAD_BRIDGE",
+                            "Command DOWNLOAD_FILE_BEGIN transferId=$transferId fileId=$fileId size=$sizeBytes name=${name.orEmpty()}",
+                        )
+                        mediaRepository.beginBridgeDownload(
+                            transferId = transferId,
+                            fileId = fileId,
+                            fileName = name,
+                            mimeType = mime,
+                            expectedSizeBytes = sizeBytes,
+                            sourceUrl = sourceUrl,
+                        ).exceptionOrNull()?.let {
+                            DebugLogStore.logError("DOWNLOAD_BRIDGE", "DOWNLOAD_FILE_BEGIN failed transferId=$transferId", it)
+                        }
+                    }
+                    BridgeCommandTypes.DOWNLOAD_FILE_CHUNK -> {
+                        val transferId = command.payload["transferId"].orEmpty()
+                        val chunk = command.payload["chunk"].orEmpty()
+                        if (transferId.isBlank() || chunk.isBlank()) return@launch
+                        mediaRepository.appendBridgeDownloadChunk(
+                            transferId = transferId,
+                            base64Chunk = chunk,
+                        ).exceptionOrNull()?.let {
+                            DebugLogStore.logError("DOWNLOAD_BRIDGE", "DOWNLOAD_FILE_CHUNK failed transferId=$transferId", it)
+                        }
+                    }
+                    BridgeCommandTypes.DOWNLOAD_FILE_END -> {
+                        val transferId = command.payload["transferId"].orEmpty()
+                        if (transferId.isBlank()) return@launch
+                        mediaRepository.finishBridgeDownload(transferId).exceptionOrNull()?.let {
+                            DebugLogStore.logError("DOWNLOAD_BRIDGE", "DOWNLOAD_FILE_END failed transferId=$transferId", it)
+                        }
+                    }
+                    BridgeCommandTypes.DOWNLOAD_FILE_CANCEL -> {
+                        val transferId = command.payload["transferId"].orEmpty()
+                        if (transferId.isBlank()) return@launch
+                        mediaRepository.cancelBridgeDownload(
+                            transferId = transferId,
+                            reason = command.payload["reason"],
+                        )
+                    }
                     BridgeCommandTypes.SET_PROXY -> {
                         DebugLogStore.log("BRIDGE", "Command SET_PROXY payloadKeys=${command.payload.keys.joinToString(",")}")
                         val proxyState = parseProxyConfig(command.payload) ?: return@launch

@@ -2,12 +2,11 @@ package com.tgweb.app
 
 import android.os.Bundle
 import android.view.MenuItem
-import android.widget.AdapterView
-import android.widget.ArrayAdapter
-import android.widget.Spinner
-import android.widget.Switch
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import com.google.android.material.materialswitch.MaterialSwitch
+import com.google.android.material.textfield.MaterialAutoCompleteTextView
+import com.google.android.material.textfield.TextInputLayout
 
 class CustomizationActivity : AppCompatActivity() {
     private val runtimePrefs by lazy {
@@ -15,36 +14,30 @@ class CustomizationActivity : AppCompatActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        val surfaceColor = if (runtimePrefs.getBoolean(KeepAliveService.KEY_DYNAMIC_COLOR, false)) {
-            UiThemeBridge.readDynamicSurfaceColor(this)
-        } else {
-            UiThemeBridge.resolveSettingsSurfaceColor(this)
-        }
-        setTheme(
-            if (UiThemeBridge.isLight(surfaceColor)) {
-                R.style.Theme_TGWeb_Settings_Light
-            } else {
-                R.style.Theme_TGWeb_Settings_Dark
-            },
-        )
+        UiThemeBridge.prepareSettingsTheme(this)
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_customization)
-        UiThemeBridge.applyWindowColors(this, surfaceColor)
-        UiThemeBridge.applyContentContrast(findViewById(android.R.id.content), surfaceColor)
+
+        val palette = UiThemeBridge.resolveSettingsPalette(this)
+        UiThemeBridge.applyWindowColors(this, palette)
+        UiThemeBridge.applyContentContrast(findViewById(android.R.id.content), palette)
 
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
         supportActionBar?.title = getString(R.string.customization_title)
 
-        val md3Effects = findViewById<Switch>(R.id.customMd3Switch)
+        val md3Effects = findViewById<MaterialSwitch>(R.id.customMd3Switch)
         val containerStyleTitle = findViewById<TextView>(R.id.customContainerStyleTitle)
-        val containerStyleSpinner = findViewById<Spinner>(R.id.customContainerStyleSpinner)
-        val md3HideBasePlates = findViewById<Switch>(R.id.customMd3HideBasePlatesSwitch)
-        val dynamicColor = findViewById<Switch>(R.id.customDynamicColorSwitch)
-        val replyAutoFocus = findViewById<Switch>(R.id.customReplyAutoFocusSwitch)
+        val containerStyleField = findViewById<TextInputLayout>(R.id.customContainerStyleField)
+        val containerStyleDropdown = findViewById<MaterialAutoCompleteTextView>(R.id.customContainerStyleSpinner)
+        val md3HideBasePlates = findViewById<MaterialSwitch>(R.id.customMd3HideBasePlatesSwitch)
+        val dynamicColor = findViewById<MaterialSwitch>(R.id.customDynamicColorSwitch)
+        val replyAutoFocus = findViewById<MaterialSwitch>(R.id.customReplyAutoFocusSwitch)
         val menuDownloadsPositionTitle = findViewById<TextView>(R.id.customMenuDownloadsPositionTitle)
-        val menuDownloadsPositionSpinner = findViewById<Spinner>(R.id.customMenuDownloadsPositionSpinner)
-        val menuShowDividers = findViewById<Switch>(R.id.customMenuShowDividersSwitch)
-        val menuHideMore = findViewById<Switch>(R.id.customMenuHideMoreSwitch)
+        val menuDownloadsPositionField = findViewById<TextInputLayout>(R.id.customMenuDownloadsPositionField)
+        val menuDownloadsPositionDropdown =
+            findViewById<MaterialAutoCompleteTextView>(R.id.customMenuDownloadsPositionSpinner)
+        val menuShowDividers = findViewById<MaterialSwitch>(R.id.customMenuShowDividersSwitch)
+        val menuHideMore = findViewById<MaterialSwitch>(R.id.customMenuHideMoreSwitch)
 
         md3Effects.isChecked = runtimePrefs.getBoolean(KeepAliveService.KEY_MD3_EFFECTS, true)
         dynamicColor.isChecked = runtimePrefs.getBoolean(KeepAliveService.KEY_DYNAMIC_COLOR, false)
@@ -57,52 +50,39 @@ class CustomizationActivity : AppCompatActivity() {
             getString(R.string.custom_container_style_segmented) to "segmented",
             getString(R.string.custom_container_style_dividers) to "dividers",
         )
+        containerStyleDropdown.setSimpleItems(containerStyles.map { it.first }.toTypedArray())
         val savedContainerStyle = runtimePrefs
             .getString(KeepAliveService.KEY_MD3_CONTAINER_STYLE, "segmented")
             .orEmpty()
-        containerStyleSpinner.adapter = ArrayAdapter(
-            this,
-            android.R.layout.simple_spinner_dropdown_item,
-            containerStyles.map { it.first },
-        )
-        val selectedContainerIndex = containerStyles.indexOfFirst { it.second == savedContainerStyle }
-        if (selectedContainerIndex >= 0) {
-            containerStyleSpinner.setSelection(selectedContainerIndex, false)
-        }
-        val md3Enabled = md3Effects.isChecked
-        containerStyleTitle.alpha = if (md3Enabled) 1f else 0.45f
-        containerStyleSpinner.isEnabled = md3Enabled
-        md3HideBasePlates.alpha = if (md3Enabled) 1f else 0.45f
-        md3HideBasePlates.isEnabled = md3Enabled
+        val containerLabel = containerStyles.firstOrNull { it.second == savedContainerStyle }?.first
+            ?: containerStyles.first().first
+        containerStyleDropdown.setText(containerLabel, false)
 
         val downloadsPositions = listOf(
             getString(R.string.custom_menu_downloads_position_start) to "start",
             getString(R.string.custom_menu_downloads_position_end) to "end",
         )
-        menuDownloadsPositionSpinner.adapter = ArrayAdapter(
-            this,
-            android.R.layout.simple_spinner_dropdown_item,
-            downloadsPositions.map { it.first },
-        )
+        menuDownloadsPositionDropdown.setSimpleItems(downloadsPositions.map { it.first }.toTypedArray())
         val savedDownloadsPosition = runtimePrefs
             .getString(KeepAliveService.KEY_MENU_DOWNLOADS_POSITION, "end")
             .orEmpty()
-        val selectedDownloadsPosition = downloadsPositions.indexOfFirst { it.second == savedDownloadsPosition }
-        if (selectedDownloadsPosition >= 0) {
-            menuDownloadsPositionSpinner.setSelection(selectedDownloadsPosition, false)
-        }
-        menuDownloadsPositionTitle.alpha = 1f
-        menuDownloadsPositionSpinner.isEnabled = true
+        val downloadLabel = downloadsPositions.firstOrNull { it.second == savedDownloadsPosition }?.first
+            ?: downloadsPositions.last().first
+        menuDownloadsPositionDropdown.setText(downloadLabel, false)
+
+        syncMd3Dependents(
+            enabled = md3Effects.isChecked,
+            containerStyleTitle = containerStyleTitle,
+            containerStyleField = containerStyleField,
+            hideBasePlateSwitch = md3HideBasePlates,
+        )
 
         md3Effects.setOnCheckedChangeListener { _, value ->
             runtimePrefs.edit()
                 .putBoolean(KeepAliveService.KEY_MD3_EFFECTS, value)
                 .apply()
+            syncMd3Dependents(value, containerStyleTitle, containerStyleField, md3HideBasePlates)
             markPendingReload()
-            containerStyleTitle.alpha = if (value) 1f else 0.45f
-            containerStyleSpinner.isEnabled = value
-            md3HideBasePlates.alpha = if (value) 1f else 0.45f
-            md3HideBasePlates.isEnabled = value
         }
         dynamicColor.setOnCheckedChangeListener { _, value ->
             runtimePrefs.edit()
@@ -122,18 +102,6 @@ class CustomizationActivity : AppCompatActivity() {
                 .apply()
             markPendingReload()
         }
-        containerStyleSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-            override fun onItemSelected(parent: AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
-                val styleValue = containerStyles.getOrNull(position)?.second ?: "segmented"
-                runtimePrefs.edit()
-                    .putString(KeepAliveService.KEY_MD3_CONTAINER_STYLE, styleValue)
-                    .apply()
-                markPendingReload()
-            }
-
-            override fun onNothingSelected(parent: AdapterView<*>?) = Unit
-        }
-
         menuShowDividers.setOnCheckedChangeListener { _, value ->
             runtimePrefs.edit()
                 .putBoolean(KeepAliveService.KEY_MENU_SHOW_DIVIDERS, value)
@@ -146,23 +114,24 @@ class CustomizationActivity : AppCompatActivity() {
                 .apply()
             markPendingReload()
         }
-        menuDownloadsPositionSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-            override fun onItemSelected(parent: AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
-                val positionValue = downloadsPositions.getOrNull(position)?.second ?: "end"
-                runtimePrefs.edit()
-                    .putString(KeepAliveService.KEY_MENU_DOWNLOADS_POSITION, positionValue)
-                    .apply()
-                markPendingReload()
-            }
 
-            override fun onNothingSelected(parent: AdapterView<*>?) = Unit
+        containerStyleDropdown.setOnItemClickListener { _, _, position, _ ->
+            val styleValue = containerStyles.getOrNull(position)?.second ?: "segmented"
+            runtimePrefs.edit()
+                .putString(KeepAliveService.KEY_MD3_CONTAINER_STYLE, styleValue)
+                .apply()
+            markPendingReload()
         }
-    }
+        menuDownloadsPositionDropdown.setOnItemClickListener { _, _, position, _ ->
+            val positionValue = downloadsPositions.getOrNull(position)?.second ?: "end"
+            runtimePrefs.edit()
+                .putString(KeepAliveService.KEY_MENU_DOWNLOADS_POSITION, positionValue)
+                .apply()
+            markPendingReload()
+        }
 
-    private fun markPendingReload() {
-        runtimePrefs.edit()
-            .putBoolean(KeepAliveService.KEY_PENDING_WEB_RELOAD, true)
-            .apply()
+        menuDownloadsPositionTitle.alpha = 1f
+        menuDownloadsPositionField.isEnabled = true
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
@@ -171,5 +140,25 @@ class CustomizationActivity : AppCompatActivity() {
             return true
         }
         return super.onOptionsItemSelected(item)
+    }
+
+    private fun syncMd3Dependents(
+        enabled: Boolean,
+        containerStyleTitle: TextView,
+        containerStyleField: TextInputLayout,
+        hideBasePlateSwitch: MaterialSwitch,
+    ) {
+        val alpha = if (enabled) 1f else 0.45f
+        containerStyleTitle.alpha = alpha
+        containerStyleField.isEnabled = enabled
+        containerStyleField.alpha = alpha
+        hideBasePlateSwitch.isEnabled = enabled
+        hideBasePlateSwitch.alpha = alpha
+    }
+
+    private fun markPendingReload() {
+        runtimePrefs.edit()
+            .putBoolean(KeepAliveService.KEY_PENDING_WEB_RELOAD, true)
+            .apply()
     }
 }

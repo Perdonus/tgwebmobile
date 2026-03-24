@@ -1,7 +1,34 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="tgweb_background">#F2F5FA</color>
-    <color name="tgweb_primary">#3390EC</color>
-    <color name="tgweb_primary_dark">#2376C5</color>
+    <color name="tgweb_background">#EEF4FB</color>
+    <color name="tgweb_surface">#FCFCFF</color>
+    <color name="tgweb_surface_container">#EEF2FA</color>
+    <color name="tgweb_surface_container_high">#E5EBF5</color>
+    <color name="tgweb_on_surface">#101A2A</color>
+    <color name="tgweb_on_surface_variant">#556274</color>
+    <color name="tgweb_outline">#7B8899</color>
+    <color name="tgweb_outline_variant">#CCD5E1</color>
+    <color name="tgweb_primary">#2A6EF4</color>
+    <color name="tgweb_on_primary">#FFFFFF</color>
+    <color name="tgweb_primary_container">#DCE6FF</color>
+    <color name="tgweb_on_primary_container">#0A1E48</color>
+    <color name="tgweb_secondary_container">#D8F2FF</color>
+    <color name="tgweb_on_secondary_container">#072C38</color>
+
+    <color name="tgweb_background_dark">#0B1320</color>
+    <color name="tgweb_surface_dark">#101826</color>
+    <color name="tgweb_surface_container_dark">#172131</color>
+    <color name="tgweb_surface_container_high_dark">#202B3D</color>
+    <color name="tgweb_on_surface_dark">#E7EEF8</color>
+    <color name="tgweb_on_surface_variant_dark">#B5C0D2</color>
+    <color name="tgweb_outline_dark">#8893A4</color>
+    <color name="tgweb_outline_variant_dark">#334052</color>
+    <color name="tgweb_primary_dark">#AFC6FF</color>
+    <color name="tgweb_on_primary_dark">#072B69</color>
+    <color name="tgweb_primary_container_dark">#1A428F</color>
+    <color name="tgweb_on_primary_container_dark">#DCE6FF</color>
+    <color name="tgweb_secondary_container_dark">#0C3744</color>
+    <color name="tgweb_on_secondary_container_dark">#CCF0FF</color>
+
     <color name="ic_launcher_background">#102233</color>
 </resources>

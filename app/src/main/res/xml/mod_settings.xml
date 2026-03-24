@@ -1,67 +1,90 @@
 <?xml version="1.0" encoding="utf-8"?>
-<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android">
+<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
 
-    <PreferenceCategory android:title="@string/mod_category_runtime">
+    <PreferenceCategory
+        android:title="@string/mod_category_runtime"
+        app:iconSpaceReserved="false">
         <SwitchPreferenceCompat
             android:key="mod_keep_alive"
             android:title="@string/mod_keep_alive_title"
             android:summary="@string/mod_keep_alive_summary"
-            android:defaultValue="true" />
+            android:defaultValue="true"
+            app:iconSpaceReserved="false" />
 
         <Preference
             android:key="mod_push_permission"
             android:title="@string/mod_push_permission_title"
-            android:summary="@string/mod_push_permission_missing" />
+            android:summary="@string/mod_push_permission_missing"
+            app:iconSpaceReserved="false" />
     </PreferenceCategory>
 
-    <PreferenceCategory android:title="@string/mod_category_customization">
+    <PreferenceCategory
+        android:title="@string/mod_category_customization"
+        app:iconSpaceReserved="false">
         <SeekBarPreference
             android:key="mod_interface_scale"
             android:title="@string/mod_scale_title"
-            android:defaultValue="100" />
+            android:defaultValue="100"
+            app:iconSpaceReserved="false" />
 
         <Preference
             android:key="mod_customization"
             android:title="@string/mod_customization_title"
-            android:summary="@string/mod_customization_summary" />
+            android:summary="@string/mod_customization_summary"
+            app:iconSpaceReserved="false" />
     </PreferenceCategory>
 
-    <PreferenceCategory android:title="@string/mod_category_network">
+    <PreferenceCategory
+        android:title="@string/mod_category_network"
+        app:iconSpaceReserved="false">
         <Preference
             android:key="mod_proxy_settings"
             android:title="@string/mod_proxy_title"
-            android:summary="@string/mod_proxy_summary" />
+            android:summary="@string/mod_proxy_summary"
+            app:iconSpaceReserved="false" />
     </PreferenceCategory>
 
-    <PreferenceCategory android:title="@string/mod_category_tools">
+    <PreferenceCategory
+        android:title="@string/mod_category_tools"
+        app:iconSpaceReserved="false">
         <Preference
             android:key="mod_session_tools"
             android:title="@string/mod_session_tools_title"
-            android:summary="@string/mod_session_tools_summary" />
+            android:summary="@string/mod_session_tools_summary"
+            app:iconSpaceReserved="false" />
 
         <Preference
             android:key="mod_downloads_manager"
             android:title="@string/mod_downloads_title"
-            android:summary="@string/mod_downloads_summary" />
+            android:summary="@string/mod_downloads_summary"
+            app:iconSpaceReserved="false" />
     </PreferenceCategory>
 
-    <PreferenceCategory android:title="@string/mod_category_web">
+    <PreferenceCategory
+        android:title="@string/mod_category_web"
+        app:iconSpaceReserved="false">
         <SwitchPreferenceCompat
             android:key="mod_use_bundled_web"
             android:title="@string/mod_bundled_web_title"
             android:summary="@string/mod_bundled_web_summary"
-            android:defaultValue="false" />
+            android:defaultValue="false"
+            app:iconSpaceReserved="false" />
     </PreferenceCategory>
 
-    <PreferenceCategory android:title="@string/mod_category_about">
+    <PreferenceCategory
+        android:title="@string/mod_category_about"
+        app:iconSpaceReserved="false">
         <Preference
             android:key="mod_author_channel"
             android:title="@string/mod_author_channel_title"
-            android:summary="@string/mod_author_channel_summary" />
+            android:summary="@string/mod_author_channel_summary"
+            app:iconSpaceReserved="false" />
 
         <Preference
             android:key="mod_version"
-            android:title="@string/mod_version_title" />
+            android:title="@string/mod_version_title"
+            app:iconSpaceReserved="false" />
     </PreferenceCategory>
 
 </PreferenceScreen>

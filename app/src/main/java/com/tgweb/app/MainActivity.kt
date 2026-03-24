@@ -488,11 +488,17 @@ class MainActivity : ComponentActivity() {
                 "DOWNLOAD",
                 "DownloadListener url=${url.take(360)} mime=${mimeType.orEmpty()} cd=${contentDisposition.orEmpty().take(200)}",
             )
+            if (!shouldUseLegacyDownloadListener(url, contentDisposition, mimeType)) {
+                DebugLogStore.log(
+                    "DOWNLOAD",
+                    "DownloadListener skipped in favor of Web bridge url=${url.take(240)}",
+                )
+                return@setDownloadListener
+            }
             val uri = runCatching { Uri.parse(url) }.getOrNull()
             val scheme = uri?.scheme?.lowercase().orEmpty()
             if (scheme.isNotBlank() && scheme !in setOf("http", "https")) {
-                DebugLogStore.log("DOWNLOAD", "Skip native download for unsupported scheme=$scheme")
-                Toast.makeText(this, "Download link is not supported in native cache: $scheme", Toast.LENGTH_SHORT).show()
+                DebugLogStore.log("DOWNLOAD", "Skip legacy native download for unsupported scheme=$scheme")
                 return@setDownloadListener
             }
 
@@ -1020,6 +1026,34 @@ class MainActivity : ComponentActivity() {
             }
         }
         return "${normalized.hashCode()}_${fileName.hashCode()}"
+    }
+
+    private fun shouldUseLegacyDownloadListener(
+        url: String,
+        contentDisposition: String?,
+        mimeType: String?,
+    ): Boolean {
+        val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return true
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme !in setOf("http", "https")) return false
+
+        val host = uri.host?.lowercase().orEmpty()
+        val path = uri.path.orEmpty()
+        val isTelegramWebHost = host == "web.telegram.org" || host.endsWith(".web.telegram.org")
+        val looksTelegramDocumentFlow = isTelegramWebHost && (
+            path.contains("/d/") ||
+                path.contains("/api") ||
+                path.contains("/file") ||
+                path.contains("/download")
+            )
+        if (looksTelegramDocumentFlow) return false
+
+        val normalizedMime = mimeType?.substringBefore(';')?.trim()?.lowercase().orEmpty()
+        val normalizedContentDisposition = contentDisposition.orEmpty().lowercase()
+        if (normalizedMime == "application/octet-stream" && normalizedContentDisposition.isBlank() && isTelegramWebHost) {
+            return false
+        }
+        return true
     }
 
     private fun resolveDownloadDisplayName(url: String, guessedFileName: String, mimeType: String?): String {
@@ -1756,6 +1790,321 @@ class MainActivity : ComponentActivity() {
                   node.textContent = String(count);
                   node.style.display = count > 0 ? 'flex' : 'none';
                 });
+              };
+
+              var nativeDownloadCaptureInstalled = false;
+              var nativeDownloadAnchorsPatched = false;
+              var nativeDownloadUrlMap = Object.create(null);
+              var nativeDownloadRecentlyHandled = Object.create(null);
+              var base64FromUint8 = function(uint8) {
+                var result = '';
+                var chunkSize = 0x8000;
+                for (var i = 0; i < uint8.length; i += chunkSize) {
+                  var part = uint8.subarray(i, i + chunkSize);
+                  result += String.fromCharCode.apply(null, part);
+                }
+                return btoa(result);
+              };
+
+              var hashString = function(value) {
+                var hash = 0;
+                var input = String(value || '');
+                for (var i = 0; i < input.length; i++) {
+                  hash = ((hash << 5) - hash) + input.charCodeAt(i);
+                  hash |= 0;
+                }
+                return Math.abs(hash).toString(16);
+              };
+
+              var buildNativeDownloadMeta = function(url, fileName, sizeBytes, mimeType) {
+                var name = String(fileName || '').trim() || 'download.bin';
+                var normalizedUrl = String(url || '');
+                if (normalizedUrl.indexOf('blob:') === 0) {
+                  normalizedUrl = 'blob:download';
+                } else {
+                  try {
+                    var parsed = new URL(normalizedUrl, location.href);
+                    if (parsed.origin === location.origin && /(^|\/)d\/[A-Za-z0-9_-]+$/.test(parsed.pathname || '')) {
+                      normalizedUrl = 'sw-download:' + name + ':' + String(sizeBytes || 0) + ':' + String(mimeType || '');
+                    }
+                  } catch (_) {}
+                }
+                var fileId = 'webdl_' + hashString([normalizedUrl, name, String(sizeBytes || 0), mimeType || ''].join('|'));
+                var transferId = 'transfer_' + Date.now() + '_' + Math.random().toString(16).slice(2, 10);
+                return {
+                  transferId: transferId,
+                  fileId: fileId,
+                  fileName: name,
+                  sizeBytes: Number(sizeBytes || 0) || 0,
+                  mimeType: String(mimeType || 'application/octet-stream'),
+                  url: String(url || '')
+                };
+              };
+
+              var parseContentDispositionFileName = function(value) {
+                var raw = String(value || '').trim();
+                if (!raw) { return ''; }
+                var utfMatch = raw.match(/filename\\*=UTF-8''([^;]+)/i);
+                if (utfMatch && utfMatch[1]) {
+                  try {
+                    return decodeURIComponent(utfMatch[1].replace(/\"/g, '').trim());
+                  } catch (_) {}
+                }
+                var plainMatch = raw.match(/filename=\"?([^\";]+)\"?/i);
+                return plainMatch && plainMatch[1] ? plainMatch[1].trim() : '';
+              };
+
+              var readAnchorDownloadName = function(anchor, response, url) {
+                var direct = String((anchor && anchor.getAttribute && anchor.getAttribute('download')) || '').trim();
+                if (direct) { return direct; }
+                var cd = response && response.headers ? response.headers.get('Content-Disposition') : '';
+                var fromHeader = parseContentDispositionFileName(cd);
+                if (fromHeader) { return fromHeader; }
+                try {
+                  var parsed = new URL(String(url || ''), location.href);
+                  var pathName = String(parsed.pathname || '').split('/').pop() || '';
+                  if (pathName && pathName !== 'd') { return decodeURIComponent(pathName); }
+                } catch (_) {}
+                return 'download.bin';
+              };
+
+              var shouldHandleNativeDownload = function(anchor) {
+                if (!anchor || !anchor.getAttribute) { return false; }
+                var href = String(anchor.getAttribute('href') || anchor.href || '').trim();
+                if (!href) { return false; }
+                if (href.indexOf('blob:') === 0) { return true; }
+                if (anchor.hasAttribute('download')) { return true; }
+                try {
+                  var parsed = new URL(href, location.href);
+                  var sameOrigin = parsed.origin === location.origin;
+                  var looksServiceWorkerDownload = /(^|\\/)d\\/[A-Za-z0-9_-]+$/.test(parsed.pathname || '');
+                  return sameOrigin && looksServiceWorkerDownload;
+                } catch (_) {
+                  return false;
+                }
+              };
+
+              var getMappedNativeBlob = function(url) {
+                var href = String(url || '').trim();
+                if (!href) { return null; }
+                return nativeDownloadUrlMap[href] || null;
+              };
+
+              var markNativeDownloadHandled = function(anchor, href) {
+                var normalizedHref = String(href || '').trim();
+                var stamp = Date.now();
+                if (anchor) {
+                  anchor.__flygramNativeHandledAt = stamp;
+                  anchor.__flygramNativeHandledHref = normalizedHref;
+                }
+                if (normalizedHref) {
+                  nativeDownloadRecentlyHandled[normalizedHref] = stamp;
+                }
+              };
+
+              var wasNativeDownloadHandledRecently = function(anchor, href) {
+                var normalizedHref = String(href || '').trim();
+                var now = Date.now();
+                if (anchor && anchor.__flygramNativeHandledAt && (now - anchor.__flygramNativeHandledAt) < 1500) {
+                  return true;
+                }
+                if (normalizedHref && nativeDownloadRecentlyHandled[normalizedHref] && (now - nativeDownloadRecentlyHandled[normalizedHref]) < 1500) {
+                  return true;
+                }
+                return false;
+              };
+
+              var sendNativeDownloadBegin = function(meta) {
+                send('${BridgeCommandTypes.DOWNLOAD_FILE_BEGIN}', {
+                  transferId: meta.transferId,
+                  fileId: meta.fileId,
+                  name: meta.fileName,
+                  mime: meta.mimeType,
+                  sizeBytes: String(meta.sizeBytes || 0),
+                  url: meta.url
+                });
+              };
+
+              var sendNativeDownloadChunk = function(meta, chunkBytes) {
+                send('${BridgeCommandTypes.DOWNLOAD_FILE_CHUNK}', {
+                  transferId: meta.transferId,
+                  fileId: meta.fileId,
+                  chunk: base64FromUint8(chunkBytes)
+                });
+              };
+
+              var sendNativeDownloadEnd = function(meta) {
+                send('${BridgeCommandTypes.DOWNLOAD_FILE_END}', {
+                  transferId: meta.transferId,
+                  fileId: meta.fileId
+                });
+              };
+
+              var sendNativeDownloadCancel = function(meta, reason) {
+                send('${BridgeCommandTypes.DOWNLOAD_FILE_CANCEL}', {
+                  transferId: meta.transferId,
+                  fileId: meta.fileId,
+                  reason: String(reason || 'download_cancelled')
+                });
+              };
+
+              var streamBlobToNative = async function(blob, meta) {
+                var chunkSize = 16 * 1024;
+                sendNativeDownloadBegin(meta);
+                for (var offset = 0; offset < blob.size; offset += chunkSize) {
+                  var chunk = blob.slice(offset, Math.min(blob.size, offset + chunkSize));
+                  var buffer = await chunk.arrayBuffer();
+                  sendNativeDownloadChunk(meta, new Uint8Array(buffer));
+                }
+                sendNativeDownloadEnd(meta);
+              };
+
+              var streamResponseToNative = async function(response, meta) {
+                if (!response.body || !response.body.getReader) {
+                  var blob = await response.blob();
+                  meta.sizeBytes = blob.size || meta.sizeBytes || 0;
+                  if (!meta.mimeType || meta.mimeType === 'application/octet-stream') {
+                    meta.mimeType = blob.type || meta.mimeType;
+                  }
+                  await streamBlobToNative(blob, meta);
+                  return;
+                }
+
+                sendNativeDownloadBegin(meta);
+                var reader = response.body.getReader();
+                while (true) {
+                  var next = await reader.read();
+                  if (!next || next.done) { break; }
+                  if (next.value && next.value.length) {
+                    sendNativeDownloadChunk(meta, next.value);
+                  }
+                }
+                sendNativeDownloadEnd(meta);
+              };
+
+              var triggerNativeDownload = async function(anchor) {
+                var href = String((anchor && (anchor.getAttribute('href') || anchor.href)) || '').trim();
+                if (!href) { return; }
+                if (wasNativeDownloadHandledRecently(anchor, href)) { return; }
+
+                var mappedBlob = getMappedNativeBlob(href);
+                var meta;
+                if (mappedBlob) {
+                  meta = buildNativeDownloadMeta(
+                    href,
+                    readAnchorDownloadName(anchor, null, href),
+                    mappedBlob.size || 0,
+                    mappedBlob.type || 'application/octet-stream'
+                  );
+                } else {
+                  var response = await fetch(href, { credentials: 'include' });
+                  if (!response.ok) {
+                    throw new Error('HTTP ' + response.status);
+                  }
+                  var sizeBytes = Number((response.headers && response.headers.get('Content-Length')) || 0) || 0;
+                  var mimeType = String((response.headers && response.headers.get('Content-Type')) || '').split(';')[0].trim();
+                  var fileName = readAnchorDownloadName(anchor, response, href);
+                  meta = buildNativeDownloadMeta(href, fileName, sizeBytes, mimeType);
+                  activeDownloads[meta.fileId] = true;
+                  updateDownloadsBadge();
+                  markNativeDownloadHandled(anchor, href);
+                  try {
+                    await streamResponseToNative(response, meta);
+                  } catch (error) {
+                    sendNativeDownloadCancel(meta, error && error.message ? error.message : 'download_stream_failed');
+                    throw error;
+                  }
+                  return;
+                }
+
+                activeDownloads[meta.fileId] = true;
+                updateDownloadsBadge();
+                markNativeDownloadHandled(anchor, href);
+                try {
+                  await streamBlobToNative(mappedBlob, meta);
+                } catch (error) {
+                  sendNativeDownloadCancel(meta, error && error.message ? error.message : 'download_stream_failed');
+                  throw error;
+                }
+              };
+
+              var patchNativeDownloadAnchors = function() {
+                if (nativeDownloadAnchorsPatched) { return; }
+                nativeDownloadAnchorsPatched = true;
+
+                if (window.URL && typeof window.URL.createObjectURL === 'function' && !window.URL.__flygramPatched) {
+                  var originalCreateObjectURL = window.URL.createObjectURL.bind(window.URL);
+                  var originalRevokeObjectURL = typeof window.URL.revokeObjectURL === 'function'
+                    ? window.URL.revokeObjectURL.bind(window.URL)
+                    : null;
+
+                  window.URL.createObjectURL = function(blob) {
+                    var objectUrl = originalCreateObjectURL(blob);
+                    try {
+                      if (blob && typeof blob.size === 'number') {
+                        nativeDownloadUrlMap[objectUrl] = blob;
+                      }
+                    } catch (_) {}
+                    return objectUrl;
+                  };
+
+                  if (originalRevokeObjectURL) {
+                    window.URL.revokeObjectURL = function(objectUrl) {
+                      try {
+                        delete nativeDownloadUrlMap[String(objectUrl || '')];
+                      } catch (_) {}
+                      return originalRevokeObjectURL(objectUrl);
+                    };
+                  }
+                  window.URL.__flygramPatched = true;
+                }
+
+                if (window.HTMLAnchorElement && window.HTMLAnchorElement.prototype && !window.HTMLAnchorElement.prototype.__flygramPatched) {
+                  var originalAnchorClick = window.HTMLAnchorElement.prototype.click;
+                  var originalAnchorDispatchEvent = window.HTMLAnchorElement.prototype.dispatchEvent;
+
+                  window.HTMLAnchorElement.prototype.click = function() {
+                    if (shouldHandleNativeDownload(this)) {
+                      triggerNativeDownload(this).catch(function(error) {
+                        console.error('FlyGram native anchor click download failed', error);
+                      });
+                      return;
+                    }
+                    return originalAnchorClick.apply(this, arguments);
+                  };
+
+                  window.HTMLAnchorElement.prototype.dispatchEvent = function(event) {
+                    var eventType = event && event.type ? String(event.type).toLowerCase() : '';
+                    if (eventType === 'click' && shouldHandleNativeDownload(this)) {
+                      triggerNativeDownload(this).catch(function(error) {
+                        console.error('FlyGram native anchor dispatch download failed', error);
+                      });
+                      return true;
+                    }
+                    return originalAnchorDispatchEvent.apply(this, arguments);
+                  };
+
+                  window.HTMLAnchorElement.prototype.__flygramPatched = true;
+                }
+              };
+
+              var installNativeDownloadCapture = function() {
+                if (nativeDownloadCaptureInstalled) { return; }
+                nativeDownloadCaptureInstalled = true;
+                patchNativeDownloadAnchors();
+                document.addEventListener('click', function(event) {
+                  if (!event || !event.target || !event.target.closest) { return; }
+                  var anchor = event.target.closest('a');
+                  if (!shouldHandleNativeDownload(anchor)) { return; }
+                  if (wasNativeDownloadHandledRecently(anchor, anchor && (anchor.getAttribute('href') || anchor.href))) {
+                    return;
+                  }
+                  event.preventDefault();
+                  event.stopPropagation();
+                  triggerNativeDownload(anchor).catch(function(error) {
+                    console.error('FlyGram native download bridge failed', error);
+                  });
+                }, true);
               };
 
               var removeMoreMenuEntry = function() {
@@ -2516,6 +2865,7 @@ class MainActivity : ComponentActivity() {
               ensureModSettingsEntry();
               ensureDownloadsButton();
               applySidebarMenuTweaks();
+              installNativeDownloadCapture();
               ensureAuthImportButtons();
               bindProxyLinkIntercept();
               reportWebUiReadyIfPossible();

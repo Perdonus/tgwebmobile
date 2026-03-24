@@ -17,16 +17,11 @@ class ModSettingsActivity : AppCompatActivity() {
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        val surfaceColor = UiThemeBridge.resolveSettingsSurfaceColor(this)
-        setTheme(
-            if (UiThemeBridge.isLight(surfaceColor)) {
-                R.style.Theme_TGWeb_Settings_Light
-            } else {
-                R.style.Theme_TGWeb_Settings_Dark
-            },
-        )
+        UiThemeBridge.prepareSettingsTheme(this)
         super.onCreate(savedInstanceState)
-        UiThemeBridge.applyWindowColors(this, surfaceColor)
+        val palette = UiThemeBridge.resolveSettingsPalette(this)
+        UiThemeBridge.applyWindowColors(this, palette)
+        UiThemeBridge.applyContentContrast(findViewById(android.R.id.content), palette)
 
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
         supportActionBar?.title = getString(R.string.mod_settings_title)

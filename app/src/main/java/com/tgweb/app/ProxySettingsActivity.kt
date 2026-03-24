@@ -4,19 +4,22 @@ import android.net.Uri
 import android.os.Bundle
 import android.text.InputType
 import android.view.MenuItem
+import android.view.View
 import android.view.ViewGroup
 import android.widget.ArrayAdapter
 import android.widget.Button
-import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ListView
-import android.widget.Spinner
+import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
-import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
-import androidx.appcompat.widget.SwitchCompat
 import androidx.lifecycle.lifecycleScope
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.google.android.material.materialswitch.MaterialSwitch
+import com.google.android.material.textfield.MaterialAutoCompleteTextView
+import com.google.android.material.textfield.TextInputEditText
+import com.google.android.material.textfield.TextInputLayout
 import com.tgweb.core.data.AppRepositories
 import com.tgweb.core.data.DebugLogStore
 import com.tgweb.core.webbridge.ProxyConfigSnapshot
@@ -36,12 +39,13 @@ import java.net.URL
 import kotlin.math.roundToInt
 
 class ProxySettingsActivity : AppCompatActivity() {
-    private lateinit var proxyEnabledSwitch: SwitchCompat
+    private lateinit var proxyEnabledSwitch: MaterialSwitch
     private lateinit var proxyList: ListView
     private lateinit var addButton: Button
     private lateinit var importButton: Button
     private lateinit var statusText: TextView
-    private lateinit var adapter: ArrayAdapter<String>
+    private lateinit var adapter: ArrayAdapter<ProxyProfile>
+    private lateinit var palette: UiThemeBridge.SettingsPalette
 
     private var profiles: MutableList<ProxyProfile> = mutableListOf()
     private var selectedProfileId: String? = null
@@ -49,18 +53,13 @@ class ProxySettingsActivity : AppCompatActivity() {
     private val health = linkedMapOf<String, String>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        val surfaceColor = UiThemeBridge.resolveSettingsSurfaceColor(this)
-        setTheme(
-            if (UiThemeBridge.isLight(surfaceColor)) {
-                R.style.Theme_TGWeb_Settings_Light
-            } else {
-                R.style.Theme_TGWeb_Settings_Dark
-            },
-        )
+        UiThemeBridge.prepareSettingsTheme(this)
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_proxy_settings)
-        UiThemeBridge.applyWindowColors(this, surfaceColor)
-        UiThemeBridge.applyContentContrast(findViewById(android.R.id.content), surfaceColor)
+
+        palette = UiThemeBridge.resolveSettingsPalette(this)
+        UiThemeBridge.applyWindowColors(this, palette)
+        UiThemeBridge.applyContentContrast(findViewById(android.R.id.content), palette)
 
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
         supportActionBar?.title = getString(R.string.proxy_settings_title)
@@ -70,8 +69,34 @@ class ProxySettingsActivity : AppCompatActivity() {
         addButton = findViewById(R.id.proxyAddButton)
         importButton = findViewById(R.id.proxyImportFromLinkButton)
         statusText = findViewById(R.id.proxyListStatusText)
-        adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, mutableListOf())
+        adapter = object : ArrayAdapter<ProxyProfile>(this, android.R.layout.simple_list_item_2, mutableListOf()) {
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                val view = super.getView(position, convertView, parent)
+                val profile = getItem(position) ?: return view
+                val titleView = view.findViewById<TextView>(android.R.id.text1)
+                val subtitleView = view.findViewById<TextView>(android.R.id.text2)
+                val active = proxyEnabledSwitch.isChecked && profile.id == selectedProfileId
+                val statusPrefix = when {
+                    active -> "Активен"
+                    profile.id == selectedProfileId -> "Выбран"
+                    else -> "Сохранён"
+                }
+                val healthText = health[profile.id] ?: getString(R.string.proxy_health_checking)
+                titleView.text = profile.title
+                subtitleView.text = "$statusPrefix • ${profile.config.host}:${profile.config.port} • ${profile.config.type.name} • $healthText"
+                UiThemeBridge.styleTwoLineListRow(
+                    context = this@ProxySettingsActivity,
+                    rowView = view,
+                    titleView = titleView,
+                    subtitleView = subtitleView,
+                    palette = palette,
+                    activated = active,
+                )
+                return view
+            }
+        }
         proxyList.adapter = adapter
+        UiThemeBridge.styleListView(proxyList, palette)
 
         bindActions()
         reloadProfiles()
@@ -120,7 +145,7 @@ class ProxySettingsActivity : AppCompatActivity() {
 
         proxyList.setOnItemLongClickListener { _, _, position, _ ->
             val profile = profiles.getOrNull(position) ?: return@setOnItemLongClickListener true
-            AlertDialog.Builder(this)
+            MaterialAlertDialogBuilder(this)
                 .setTitle(profile.title)
                 .setItems(arrayOf(getString(R.string.proxy_edit), getString(R.string.proxy_delete))) { _, which ->
                     when (which) {
@@ -135,6 +160,7 @@ class ProxySettingsActivity : AppCompatActivity() {
                         }
                     }
                 }
+                .setNegativeButton(android.R.string.cancel, null)
                 .show()
             true
         }
@@ -149,25 +175,13 @@ class ProxySettingsActivity : AppCompatActivity() {
     }
 
     private fun renderList() {
-        if (profiles.isEmpty()) {
-            statusText.text = getString(R.string.proxy_profiles_empty)
+        statusText.text = if (profiles.isEmpty()) {
+            getString(R.string.proxy_profiles_empty)
         } else {
-            statusText.text = getString(R.string.proxy_profiles_hint)
-        }
-
-        val selectedId = selectedProfileId
-        val enabled = proxyEnabledSwitch.isChecked
-        val rows = profiles.map { profile ->
-            val prefix = when {
-                profile.id == selectedId && enabled -> "●"
-                profile.id == selectedId -> "○"
-                else -> "·"
-            }
-            val healthText = health[profile.id] ?: getString(R.string.proxy_health_checking)
-            "$prefix ${profile.title}\n${profile.config.host}:${profile.config.port} • ${profile.config.type.name} • $healthText"
+            getString(R.string.proxy_profiles_hint)
         }
         adapter.clear()
-        adapter.addAll(rows)
+        adapter.addAll(profiles)
         adapter.notifyDataSetChanged()
     }
 
@@ -197,16 +211,16 @@ class ProxySettingsActivity : AppCompatActivity() {
     }
 
     private fun showImportLinkDialog() {
-        val input = EditText(this).apply {
-            hint = getString(R.string.proxy_link_import_hint)
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
-            minLines = 2
-        }
-        AlertDialog.Builder(this)
+        val field = createTextField(
+            hint = getString(R.string.proxy_link_import_hint),
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI,
+        )
+        field.editText?.minLines = 2
+        MaterialAlertDialogBuilder(this)
             .setTitle(R.string.proxy_link_import_title)
-            .setView(input)
+            .setView(wrapDialogContent(field))
             .setPositiveButton(R.string.proxy_import_button) { _, _ ->
-                val parsed = ProxyLinkParser.parse(input.text?.toString())
+                val parsed = ProxyLinkParser.parse(field.editText?.text?.toString())
                 if (parsed == null) {
                     showToast(getString(R.string.proxy_import_invalid))
                     DebugLogStore.log("PROXY", "Proxy import failed: invalid link")
@@ -228,64 +242,79 @@ class ProxySettingsActivity : AppCompatActivity() {
     }
 
     private fun showProxyEditorDialog(existing: ProxyProfile? = null) {
-        val container = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(28, 18, 28, 8)
-        }
-
-        fun makeInput(hint: String, value: String = "", inputType: Int = InputType.TYPE_CLASS_TEXT): EditText {
-            return EditText(this).apply {
-                this.hint = hint
-                this.setText(value)
-                this.inputType = inputType
-                layoutParams = LinearLayout.LayoutParams(
+        val titleField = createTextField(
+            hint = getString(R.string.proxy_profile_name),
+            value = existing?.title.orEmpty(),
+        )
+        val hostField = createTextField(
+            hint = getString(R.string.proxy_host),
+            value = existing?.config?.host.orEmpty(),
+        )
+        val portField = createTextField(
+            hint = getString(R.string.proxy_port),
+            value = existing?.config?.port?.takeIf { it > 0 }?.toString().orEmpty(),
+            inputType = InputType.TYPE_CLASS_NUMBER,
+        )
+        val usernameField = createTextField(
+            hint = getString(R.string.proxy_username),
+            value = existing?.config?.username.orEmpty(),
+        )
+        val passwordField = createTextField(
+            hint = getString(R.string.proxy_password),
+            value = existing?.config?.password.orEmpty(),
+        )
+        val secretField = createTextField(
+            hint = getString(R.string.proxy_secret),
+            value = existing?.config?.secret.orEmpty(),
+        )
+        val typeField = TextInputLayout(this).apply {
+            hint = getString(R.string.proxy_type)
+            isHintEnabled = true
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply {
+                topMargin = UiThemeBridge.dp(context, 12)
+            }
+            val input = MaterialAutoCompleteTextView(context).apply {
+                inputType = InputType.TYPE_NULL
+                isFocusable = false
+                val values = listOf(ProxyType.HTTP.name, ProxyType.SOCKS5.name, ProxyType.MTPROTO.name)
+                setSimpleItems(values.toTypedArray())
+                setText(existing?.config?.type?.name ?: ProxyType.HTTP.name, false)
+            }
+            addView(
+                input,
+                LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT,
-                )
-            }
+                ),
+            )
+            tag = input
         }
 
-        val titleInput = makeInput(getString(R.string.proxy_profile_name), existing?.title.orEmpty())
-        val hostInput = makeInput(getString(R.string.proxy_host), existing?.config?.host.orEmpty())
-        val portInput = makeInput(
-            getString(R.string.proxy_port),
-            existing?.config?.port?.takeIf { it > 0 }?.toString().orEmpty(),
-            InputType.TYPE_CLASS_NUMBER,
-        )
-        val usernameInput = makeInput(getString(R.string.proxy_username), existing?.config?.username.orEmpty())
-        val passwordInput = makeInput(getString(R.string.proxy_password), existing?.config?.password.orEmpty())
-        val secretInput = makeInput(getString(R.string.proxy_secret), existing?.config?.secret.orEmpty())
-        val typeSpinner = Spinner(this).apply {
-            val values = listOf(ProxyType.HTTP.name, ProxyType.SOCKS5.name, ProxyType.MTPROTO.name)
-            adapter = ArrayAdapter(
-                this@ProxySettingsActivity,
-                android.R.layout.simple_spinner_item,
-                values,
-            ).also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
-            val selected = existing?.config?.type?.name ?: ProxyType.HTTP.name
-            setSelection(values.indexOf(selected).coerceAtLeast(0))
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(titleField)
+            addView(typeField)
+            addView(hostField)
+            addView(portField)
+            addView(usernameField)
+            addView(passwordField)
+            addView(secretField)
         }
 
-        container.addView(titleInput)
-        container.addView(typeSpinner)
-        container.addView(hostInput)
-        container.addView(portInput)
-        container.addView(usernameInput)
-        container.addView(passwordInput)
-        container.addView(secretInput)
-
-        AlertDialog.Builder(this)
+        MaterialAlertDialogBuilder(this)
             .setTitle(if (existing == null) R.string.proxy_add else R.string.proxy_edit)
-            .setView(container)
+            .setView(wrapDialogContent(content))
             .setPositiveButton(R.string.proxy_apply_button) { _, _ ->
-                val host = hostInput.text?.toString()?.trim().orEmpty()
-                val port = portInput.text?.toString()?.trim()?.toIntOrNull() ?: 0
-                val type = runCatching {
-                    ProxyType.valueOf(typeSpinner.selectedItem?.toString().orEmpty())
-                }.getOrDefault(ProxyType.HTTP)
-                val username = usernameInput.text?.toString()?.trim().orEmpty().ifBlank { null }
-                val password = passwordInput.text?.toString()?.trim().orEmpty().ifBlank { null }
-                val secret = secretInput.text?.toString()?.trim().orEmpty().ifBlank { null }
+                val host = hostField.editText?.text?.toString()?.trim().orEmpty()
+                val port = portField.editText?.text?.toString()?.trim()?.toIntOrNull() ?: 0
+                val typeValue = (typeField.tag as? MaterialAutoCompleteTextView)?.text?.toString().orEmpty()
+                val type = runCatching { ProxyType.valueOf(typeValue) }.getOrDefault(ProxyType.HTTP)
+                val username = usernameField.editText?.text?.toString()?.trim().orEmpty().ifBlank { null }
+                val password = passwordField.editText?.text?.toString()?.trim().orEmpty().ifBlank { null }
+                val secret = secretField.editText?.text?.toString()?.trim().orEmpty().ifBlank { null }
 
                 if (host.isBlank() || port !in 1..65535) {
                     showToast(getString(R.string.proxy_invalid_host_port))
@@ -307,7 +336,7 @@ class ProxySettingsActivity : AppCompatActivity() {
                 )
                 val profile = ProxyProfile(
                     id = existing?.id ?: java.util.UUID.randomUUID().toString(),
-                    title = titleInput.text?.toString()?.trim().orEmpty().ifBlank {
+                    title = titleField.editText?.text?.toString()?.trim().orEmpty().ifBlank {
                         ProxyProfilesStore.defaultTitle(config)
                     },
                     config = config,
@@ -395,6 +424,51 @@ class ProxySettingsActivity : AppCompatActivity() {
                 "Latency check failed for ${state.type.name}://${state.host}:${state.port}: ${it::class.java.simpleName}: ${it.message}",
             )
         }.getOrNull()
+    }
+
+    private fun createTextField(
+        hint: String,
+        value: String = "",
+        inputType: Int = InputType.TYPE_CLASS_TEXT,
+    ): TextInputLayout {
+        return TextInputLayout(this).apply {
+            this.hint = hint
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply {
+                topMargin = UiThemeBridge.dp(context, 12)
+            }
+            val input = TextInputEditText(context).apply {
+                setText(value)
+                this.inputType = inputType
+            }
+            addView(
+                input,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
+            )
+        }
+    }
+
+    private fun wrapDialogContent(content: View): View {
+        return ScrollView(this).apply {
+            setPadding(
+                UiThemeBridge.dp(context, 4),
+                UiThemeBridge.dp(context, 4),
+                UiThemeBridge.dp(context, 4),
+                0,
+            )
+            addView(
+                content,
+                ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
+            )
+        }
     }
 
     private fun showToast(message: String) {
