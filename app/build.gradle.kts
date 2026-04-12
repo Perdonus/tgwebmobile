@@ -4,15 +4,16 @@ plugins {
 }
 
 val tgwebStoreFile = rootProject.file("signing/tgweb-update.jks")
-val tgwebStorePassword = (findProperty("TGWEB_STORE_PASSWORD") as? String)
-    ?: System.getenv("TGWEB_STORE_PASSWORD")
-    ?: "tgwebmobile"
-val tgwebKeyAlias = (findProperty("TGWEB_KEY_ALIAS") as? String)
-    ?: System.getenv("TGWEB_KEY_ALIAS")
-    ?: "tgweb"
-val tgwebKeyPassword = (findProperty("TGWEB_KEY_PASSWORD") as? String)
-    ?: System.getenv("TGWEB_KEY_PASSWORD")
-    ?: "tgwebmobile"
+
+fun resolveStringProperty(name: String, fallback: String): String {
+    return ((findProperty(name) as? String)?.takeIf { it.isNotBlank() }
+        ?: System.getenv(name)?.takeIf { it.isNotBlank() }
+        ?: fallback)
+}
+
+val tgwebStorePassword = resolveStringProperty("TGWEB_STORE_PASSWORD", "tgwebmobile")
+val tgwebKeyAlias = resolveStringProperty("TGWEB_KEY_ALIAS", "tgweb")
+val tgwebKeyPassword = resolveStringProperty("TGWEB_KEY_PASSWORD", "tgwebmobile")
 
 android {
     namespace = "com.tgweb.app"
