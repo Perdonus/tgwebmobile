@@ -1,30 +1,36 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="ShapeAppearanceOverlay.TGWeb.Settings.Card">
+    <style name="ShapeAppearanceOverlay.TGWeb.Settings" parent="">
         <item name="cornerFamily">rounded</item>
         <item name="cornerSize">28dp</item>
     </style>
 
-    <style name="Widget.TGWeb.Settings.ActionBar">
+    <style name="ShapeAppearanceOverlay.TGWeb.Settings.Card" parent="ShapeAppearanceOverlay.TGWeb.Settings" />
+
+    <style name="Widget.TGWeb.Settings" parent="" />
+
+    <style name="Widget.TGWeb.Settings.ActionBar" parent="Widget.TGWeb.Settings">
         <item name="android:background">?attr/colorSurface</item>
         <item name="background">?attr/colorSurface</item>
         <item name="elevation">0dp</item>
         <item name="titleTextStyle">@style/TextAppearance.TGWeb.Settings.ActionBarTitle</item>
     </style>
 
-    <style name="ThemeOverlay.TGWeb.Settings.ActionBar">
+    <style name="ThemeOverlay.TGWeb.Settings" parent="" />
+
+    <style name="ThemeOverlay.TGWeb.Settings.ActionBar" parent="ThemeOverlay.TGWeb.Settings">
         <item name="android:textColorPrimary">?attr/colorOnSurface</item>
         <item name="android:textColorSecondary">?attr/colorOnSurfaceVariant</item>
     </style>
 
-    <style name="Widget.TGWeb.Settings.Toolbar">
+    <style name="Widget.TGWeb.Settings.Toolbar" parent="Widget.TGWeb.Settings">
         <item name="android:background">?attr/colorSurface</item>
         <item name="titleTextColor">?attr/colorOnSurface</item>
         <item name="subtitleTextColor">?attr/colorOnSurfaceVariant</item>
         <item name="navigationIconTint">?attr/colorOnSurface</item>
     </style>
 
-    <style name="Widget.TGWeb.Settings.Card">
+    <style name="Widget.TGWeb.Settings.Card" parent="Widget.TGWeb.Settings">
         <item name="cardBackgroundColor">?attr/colorSurface</item>
         <item name="cardElevation">0dp</item>
         <item name="contentPadding">0dp</item>
@@ -39,7 +45,7 @@
         <item name="strokeColor">?attr/colorPrimaryContainer</item>
     </style>
 
-    <style name="Widget.TGWeb.Settings.Button">
+    <style name="Widget.TGWeb.Settings.Button" parent="Widget.TGWeb.Settings">
         <item name="android:fontFamily">sans-serif-medium</item>
         <item name="android:minHeight">56dp</item>
         <item name="android:textAllCaps">false</item>
@@ -65,7 +71,7 @@
         <item name="strokeWidth">1dp</item>
     </style>
 
-    <style name="Widget.TGWeb.Settings.Spinner">
+    <style name="Widget.TGWeb.Settings.Spinner" parent="Widget.TGWeb.Settings">
         <item name="android:backgroundTint">?attr/colorOutlineVariant</item>
         <item name="android:dropDownWidth">match_parent</item>
         <item name="android:minHeight">56dp</item>
@@ -74,7 +80,7 @@
         <item name="android:popupBackground">?attr/colorSurfaceContainerHigh</item>
     </style>
 
-    <style name="Widget.TGWeb.Settings.Toggle">
+    <style name="Widget.TGWeb.Settings.Toggle" parent="Widget.TGWeb.Settings">
         <item name="android:fontFamily">sans-serif-medium</item>
         <item name="android:minHeight">56dp</item>
         <item name="android:paddingTop">6dp</item>
@@ -83,7 +89,7 @@
         <item name="android:textColor">?attr/colorOnSurface</item>
     </style>
 
-    <style name="Widget.TGWeb.Settings.ListEmptyText">
+    <style name="Widget.TGWeb.Settings.ListEmptyText" parent="Widget.TGWeb.Settings">
         <item name="android:gravity">center</item>
         <item name="android:padding">28dp</item>
         <item name="android:textAlignment">center</item>
@@ -91,13 +97,15 @@
         <item name="android:textSize">15sp</item>
     </style>
 
-    <style name="TextAppearance.TGWeb.Settings.ActionBarTitle">
+    <style name="TextAppearance.TGWeb.Settings" parent="TextAppearance.Material3.BodyMedium" />
+
+    <style name="TextAppearance.TGWeb.Settings.ActionBarTitle" parent="TextAppearance.TGWeb.Settings">
         <item name="android:fontFamily">sans-serif-medium</item>
         <item name="android:textColor">?attr/colorOnSurface</item>
         <item name="android:textSize">20sp</item>
     </style>
 
-    <style name="TextAppearance.TGWeb.Settings.Eyebrow">
+    <style name="TextAppearance.TGWeb.Settings.Eyebrow" parent="TextAppearance.TGWeb.Settings">
         <item name="android:fontFamily">sans-serif-medium</item>
         <item name="android:letterSpacing">0.08</item>
         <item name="android:textAllCaps">true</item>
@@ -105,44 +113,44 @@
         <item name="android:textSize">12sp</item>
     </style>
 
-    <style name="TextAppearance.TGWeb.Settings.HeroTitle">
+    <style name="TextAppearance.TGWeb.Settings.HeroTitle" parent="TextAppearance.TGWeb.Settings">
         <item name="android:fontFamily">sans-serif-medium</item>
         <item name="android:lineSpacingExtra">2dp</item>
         <item name="android:textColor">?attr/colorOnPrimaryContainer</item>
         <item name="android:textSize">30sp</item>
     </style>
 
-    <style name="TextAppearance.TGWeb.Settings.HeroBody">
+    <style name="TextAppearance.TGWeb.Settings.HeroBody" parent="TextAppearance.TGWeb.Settings">
         <item name="android:lineSpacingExtra">2dp</item>
         <item name="android:textColor">?attr/colorOnPrimaryContainer</item>
         <item name="android:textSize">15sp</item>
     </style>
 
-    <style name="TextAppearance.TGWeb.Settings.SectionTitle">
+    <style name="TextAppearance.TGWeb.Settings.SectionTitle" parent="TextAppearance.TGWeb.Settings">
         <item name="android:fontFamily">sans-serif-medium</item>
         <item name="android:textColor">?attr/colorOnSurface</item>
         <item name="android:textSize">19sp</item>
     </style>
 
-    <style name="TextAppearance.TGWeb.Settings.SectionBody">
+    <style name="TextAppearance.TGWeb.Settings.SectionBody" parent="TextAppearance.TGWeb.Settings">
         <item name="android:lineSpacingExtra">2dp</item>
         <item name="android:textColor">?attr/colorOnSurfaceVariant</item>
         <item name="android:textSize">14sp</item>
     </style>
 
-    <style name="TextAppearance.TGWeb.Settings.SectionLabel">
+    <style name="TextAppearance.TGWeb.Settings.SectionLabel" parent="TextAppearance.TGWeb.Settings">
         <item name="android:fontFamily">sans-serif-medium</item>
         <item name="android:textColor">?attr/colorOnSurface</item>
         <item name="android:textSize">15sp</item>
     </style>
 
-    <style name="TextAppearance.TGWeb.Settings.Status">
+    <style name="TextAppearance.TGWeb.Settings.Status" parent="TextAppearance.TGWeb.Settings">
         <item name="android:lineSpacingExtra">2dp</item>
         <item name="android:textColor">?attr/colorOnSurface</item>
         <item name="android:textSize">15sp</item>
     </style>
 
-    <style name="TextAppearance.TGWeb.Settings.PreferenceCategory">
+    <style name="TextAppearance.TGWeb.Settings.PreferenceCategory" parent="TextAppearance.TGWeb.Settings">
         <item name="android:fontFamily">sans-serif-medium</item>
         <item name="android:letterSpacing">0.05</item>
         <item name="android:textAllCaps">true</item>
@@ -150,26 +158,28 @@
         <item name="android:textSize">12sp</item>
     </style>
 
-    <style name="TextAppearance.TGWeb.Settings.PreferenceTitle">
+    <style name="TextAppearance.TGWeb.Settings.PreferenceTitle" parent="TextAppearance.TGWeb.Settings">
         <item name="android:fontFamily">sans-serif-medium</item>
         <item name="android:textColor">?attr/colorOnSurface</item>
         <item name="android:textSize">17sp</item>
     </style>
 
-    <style name="TextAppearance.TGWeb.Settings.PreferenceSummary">
+    <style name="TextAppearance.TGWeb.Settings.PreferenceSummary" parent="TextAppearance.TGWeb.Settings">
         <item name="android:lineSpacingExtra">2dp</item>
         <item name="android:textColor">?attr/colorOnSurfaceVariant</item>
         <item name="android:textSize">14sp</item>
     </style>
 
-    <style name="PreferenceThemeOverlay.TGWeb.Settings">
+    <style name="PreferenceThemeOverlay.TGWeb" parent="" />
+
+    <style name="PreferenceThemeOverlay.TGWeb.Settings" parent="PreferenceThemeOverlay.TGWeb">
         <item name="preferenceCategoryStyle">@style/Widget.TGWeb.Settings.PreferenceCategory</item>
         <item name="preferenceStyle">@style/Widget.TGWeb.Settings.Preference</item>
         <item name="seekBarPreferenceStyle">@style/Widget.TGWeb.Settings.Preference.SeekBar</item>
         <item name="switchPreferenceCompatStyle">@style/Widget.TGWeb.Settings.Preference.Switch</item>
     </style>
 
-    <style name="Widget.TGWeb.Settings.Preference">
+    <style name="Widget.TGWeb.Settings.Preference" parent="Widget.TGWeb.Settings">
         <item name="allowDividerAbove">false</item>
         <item name="allowDividerBelow">false</item>
         <item name="iconSpaceReserved">false</item>
@@ -185,7 +195,7 @@
         <item name="layout">@layout/preference_seekbar_tgweb</item>
     </style>
 
-    <style name="Widget.TGWeb.Settings.PreferenceCategory">
+    <style name="Widget.TGWeb.Settings.PreferenceCategory" parent="Widget.TGWeb.Settings">
         <item name="allowDividerAbove">false</item>
         <item name="allowDividerBelow">false</item>
         <item name="iconSpaceReserved">false</item>

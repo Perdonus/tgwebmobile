@@ -16,12 +16,10 @@
         <item name="actionBarStyle">@style/Widget.TGWeb.Settings.ActionBar</item>
         <item name="actionBarTheme">@style/ThemeOverlay.TGWeb.Settings.ActionBar</item>
         <item name="toolbarStyle">@style/Widget.TGWeb.Settings.Toolbar</item>
-        <item name="materialToolbarStyle">@style/Widget.TGWeb.Settings.Toolbar</item>
         <item name="materialButtonStyle">@style/Widget.TGWeb.Settings.Button</item>
         <item name="materialCardViewStyle">@style/Widget.TGWeb.Settings.Card</item>
         <item name="preferenceTheme">@style/PreferenceThemeOverlay.TGWeb.Settings</item>
         <item name="android:listDivider">@android:color/transparent</item>
-        <item name="listDivider">@android:color/transparent</item>
         <item name="android:windowBackground">?android:colorBackground</item>
         <item name="android:navigationBarColor">?attr/colorSurface</item>
         <item name="android:statusBarColor">?attr/colorSurface</item>
