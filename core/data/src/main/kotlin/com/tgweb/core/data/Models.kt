@@ -1,11 +1,6 @@
 package com.tgweb.core.data
 
-enum class PeerType {
-    PRIVATE,
-    GROUP,
-    CHANNEL,
-    UNKNOWN,
-}
+import com.tgweb.core.webbridge.PeerType
 
 data class ChatSummary(
     val chatId: Long,

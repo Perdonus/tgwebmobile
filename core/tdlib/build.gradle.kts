@@ -23,5 +23,6 @@ android {
 }
 
 dependencies {
+    api(project(":core:webbridge"))
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")
 }

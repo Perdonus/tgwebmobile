@@ -1,6 +1,6 @@
 package com.tgweb.core.tdlib
 
-import com.tgweb.core.data.PeerType
+import com.tgweb.core.webbridge.PeerType
 import com.tgweb.core.webbridge.ProxyConfigSnapshot
 import com.tgweb.core.webbridge.ProxyType
 import kotlinx.coroutines.flow.Flow

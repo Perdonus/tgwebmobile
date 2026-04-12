@@ -20,7 +20,7 @@ import com.tgweb.core.data.AppRepositories
 import com.tgweb.core.data.DebugLogStore
 import com.tgweb.core.data.MessageItem
 import com.tgweb.core.data.NotificationService
-import com.tgweb.core.data.PeerType
+import com.tgweb.core.webbridge.PeerType
 import com.tgweb.core.data.PushDebugResult
 import com.tgweb.core.data.ProxyTransportUtils
 import com.tgweb.core.webbridge.ProxyConfigSnapshot

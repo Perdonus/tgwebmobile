@@ -36,6 +36,13 @@ data class WebMessageSnapshot(
     val createdAt: Long,
 )
 
+enum class PeerType {
+    PRIVATE,
+    GROUP,
+    CHANNEL,
+    UNKNOWN,
+}
+
 enum class ProxyType {
     HTTP,
     SOCKS5,
