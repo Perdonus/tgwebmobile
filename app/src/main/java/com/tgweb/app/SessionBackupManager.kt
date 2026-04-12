@@ -56,6 +56,12 @@ object SessionBackupManager {
         val payload: TelegramSessionPayload,
     )
 
+    private data class OriginalImportInfo(
+        val format: BackupFormat,
+        val payload: TelegramSessionPayload,
+        val originalName: String?,
+    )
+
     suspend fun exportBackup(
         context: Context,
         format: BackupFormat,
@@ -73,7 +79,20 @@ object SessionBackupManager {
                 "session_export_${System.currentTimeMillis()}${format.fileExtension}",
             )
             deleteRecursively(tempFile)
-            TelegramSessionFormats.exportToFile(format, payload, tempFile)
+            val exactOriginal = loadOriginalImportArtifactForExport(
+                context = context,
+                requestedFormat = format,
+                currentPayload = payload,
+            )
+            if (exactOriginal != null) {
+                exactOriginal.inputStream().use { input ->
+                    tempFile.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                }
+            } else {
+                TelegramSessionFormats.exportToFile(format, payload, tempFile)
+            }
 
             context.contentResolver.openOutputStream(destinationUri)?.use { output ->
                 tempFile.inputStream().use { input ->
@@ -106,6 +125,13 @@ object SessionBackupManager {
 
             val parsed = TelegramSessionFormats.parseImportFile(tempFile)
             requireImportCompatibility(expectedFormat, parsed.format)
+            persistOriginalImportArtifact(
+                context = context,
+                format = parsed.format,
+                payload = parsed.payload.normalized(),
+                sourceFile = tempFile,
+                originalName = displayName,
+            )
             persistPendingImport(
                 context = context,
                 pendingImport = PendingImport(
@@ -239,6 +265,65 @@ object SessionBackupManager {
         file.writeText(root.toString())
     }
 
+    private fun persistOriginalImportArtifact(
+        context: Context,
+        format: BackupFormat,
+        payload: TelegramSessionPayload,
+        sourceFile: File,
+        originalName: String?,
+    ) {
+        val artifact = originalImportArtifactFile(context, format)
+        artifact.parentFile?.mkdirs()
+        sourceFile.inputStream().use { input ->
+            artifact.outputStream().use { output ->
+                input.copyTo(output)
+            }
+        }
+        val metadata = JSONObject()
+            .put("format", format.wire)
+            .put("payload", payload.normalized().toJson())
+            .put("originalName", originalName.orEmpty())
+            .put("updatedAt", System.currentTimeMillis())
+        originalImportMetadataFile(context).writeText(metadata.toString())
+    }
+
+    private fun loadOriginalImportArtifactForExport(
+        context: Context,
+        requestedFormat: BackupFormat,
+        currentPayload: TelegramSessionPayload,
+    ): File? {
+        val metadataFile = originalImportMetadataFile(context)
+        if (!metadataFile.exists()) return null
+        val info = runCatching {
+            val root = JSONObject(metadataFile.readText())
+            val format = BackupFormat.fromWire(root.optString("format"))
+                ?: error("Unknown original import format")
+            val payload = TelegramSessionPayload.fromJson(root.getJSONObject("payload"))
+            OriginalImportInfo(
+                format = format,
+                payload = payload,
+                originalName = root.optString("originalName").takeIf { it.isNotBlank() },
+            )
+        }.getOrNull() ?: return null
+
+        if (info.format != requestedFormat) return null
+        if (!isSameSessionSnapshot(info.payload, currentPayload)) return null
+
+        val artifact = originalImportArtifactFile(context, info.format)
+        if (!artifact.exists() || artifact.length() <= 0L) return null
+        return artifact
+    }
+
+    private fun isSameSessionSnapshot(
+        left: TelegramSessionPayload,
+        right: TelegramSessionPayload,
+    ): Boolean {
+        val normalizedLeft = left.normalized()
+        val normalizedRight = right.normalized()
+        return normalizedLeft.dcId == normalizedRight.dcId &&
+            normalizedLeft.authKeys == normalizedRight.authKeys
+    }
+
     private fun requireImportCompatibility(
         expectedFormat: BackupFormat?,
         actualFormat: BackupFormat,
@@ -266,6 +351,14 @@ object SessionBackupManager {
         return File(context.filesDir, CURRENT_SESSION_FILE_NAME)
     }
 
+    private fun originalImportArtifactFile(context: Context, format: BackupFormat): File {
+        return File(context.filesDir, "flygram_last_import${format.fileExtension}")
+    }
+
+    private fun originalImportMetadataFile(context: Context): File {
+        return File(context.filesDir, ORIGINAL_IMPORT_METADATA_FILE_NAME)
+    }
+
     private fun pendingImportFile(context: Context): File {
         return File(context.filesDir, PENDING_IMPORT_FILE_NAME)
     }
@@ -285,6 +378,7 @@ object SessionBackupManager {
     private const val WEBVIEW_DIR_NAME = "app_webview"
     private const val WEBVIEW_IMPORT_DIR_NAME = "app_webview_import_staging"
     private const val CURRENT_SESSION_FILE_NAME = "flygram_current_session.json"
+    private const val ORIGINAL_IMPORT_METADATA_FILE_NAME = "flygram_last_import_metadata.json"
     private const val PENDING_IMPORT_FILE_NAME = "flygram_pending_import.json"
     private const val PENDING_SETTINGS_FILE_NAME = "tgweb_pending_settings.json"
     private const val KEY_PENDING_IMPORT_FORMAT = "session_backup_pending_import_format"

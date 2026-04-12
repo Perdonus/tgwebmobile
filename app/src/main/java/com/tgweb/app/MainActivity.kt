@@ -122,6 +122,14 @@ class MainActivity : ComponentActivity() {
                         clip.getItemAt(index)?.uri?.let(list::add)
                     }
                 }
+                val persistFlags = result.data?.flags?.and(
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+                ) ?: Intent.FLAG_GRANT_READ_URI_PERMISSION
+                list.forEach { uri ->
+                    runCatching {
+                        contentResolver.takePersistableUriPermission(uri, persistFlags)
+                    }
+                }
                 callback.onReceiveValue(if (list.isEmpty()) null else list.toTypedArray())
                 DebugLogStore.log("FILE_PICKER", "Manual chooser result count=${list.size}")
             } else {
@@ -316,13 +324,7 @@ class MainActivity : ComponentActivity() {
                 pendingFileChooser = filePathCallback
 
                 val chooserIntent = runCatching {
-                    fileChooserParams?.createIntent()?.apply {
-                        addCategory(Intent.CATEGORY_OPENABLE)
-                    } ?: Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-                        addCategory(Intent.CATEGORY_OPENABLE)
-                        type = "*/*"
-                        putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
-                    }
+                    buildFileChooserIntent(fileChooserParams)
                 }.getOrNull()
 
                 if (chooserIntent == null) {
@@ -1009,6 +1011,35 @@ class MainActivity : ComponentActivity() {
         return "${normalized.hashCode()}_${fileName.hashCode()}"
     }
 
+    private fun buildFileChooserIntent(
+        fileChooserParams: WebChromeClient.FileChooserParams?,
+    ): Intent {
+        val rawAcceptTypes = fileChooserParams?.acceptTypes.orEmpty()
+            .flatMap { raw ->
+                raw.split(',')
+                    .map { it.trim() }
+                    .filter { it.isNotBlank() }
+            }
+            .distinct()
+        val acceptTypes = rawAcceptTypes.filter { it == "*/*" || it.contains('/') }
+        val allowMultiple = fileChooserParams?.mode == WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE
+        val baseType = when {
+            acceptTypes.isEmpty() -> "*/*"
+            acceptTypes.size == 1 -> acceptTypes.first()
+            else -> "*/*"
+        }
+        return Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = baseType
+            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, allowMultiple)
+            if (acceptTypes.size > 1 || (acceptTypes.size == 1 && acceptTypes.first() != baseType)) {
+                putExtra(Intent.EXTRA_MIME_TYPES, acceptTypes.toTypedArray())
+            }
+        }.let { intent ->
+            Intent.createChooser(intent, "Выбор файла")
+        }
+    }
+
     private fun shouldUseLegacyDownloadListener(
         url: String,
         contentDisposition: String?,
@@ -1026,7 +1057,14 @@ class MainActivity : ComponentActivity() {
                 path.contains("/file") ||
                 path.contains("/download")
             )
-        if (looksTelegramDocumentFlow) return false
+        val looksServiceWorkerDownloadFlow = isTelegramWebHost && (
+            path.startsWith("/d/") ||
+                path.contains("/k/d/") ||
+                path.endsWith("_download.zip") ||
+                url.contains("_download.zip", ignoreCase = true) ||
+                contentDisposition.orEmpty().contains("_download.zip", ignoreCase = true)
+            )
+        if (looksTelegramDocumentFlow || looksServiceWorkerDownloadFlow) return false
 
         val normalizedMime = mimeType?.substringBefore(';')?.trim()?.lowercase().orEmpty()
         val normalizedContentDisposition = contentDisposition.orEmpty().lowercase()
@@ -1870,13 +1908,7 @@ class MainActivity : ComponentActivity() {
                   ? 'linear-gradient(135deg, var(--flygram-accent), ' + blendHex(accentColor, '#ffffff', 0.18) + ')'
                   : 'var(--flygram-accent)';
                 var primaryButtonText = '#fff';
-                var groupsCssBlock = groupsCss
-                  ? '.settings-container .profile-buttons,.settings-container .list,.settings-container .sections,' +
-                    '.settings-container .content,.btn-menu .btn-menu-items,.btn-menu,.popup .btn-menu-items,' +
-                    '.menu,.left-sidebar .btn-menu-items,.profile-content .profile-buttons{' +
-                      groupsCss +
-                    '}'
-                  : '';
+                var groupsCssBlock = '';
                 var rowBgCss = hideBasePlates
                   ? 'background:var(--flygram-container) !important;'
                   : 'background:var(--flygram-surface) !important;';
@@ -1897,57 +1929,33 @@ class MainActivity : ComponentActivity() {
                     '--flygram-accent:' + accentColor + ';' +
                   '}' +
                   groupsCssBlock +
-                  '.settings-container .row,.settings-content .row,.profile-buttons .row,' +
-                  '.btn-menu .btn-menu-item,.popup .btn-menu-item,.menu-item,.row.no-subtitle,' +
-                  '.left-sidebar .btn-menu-item,.profile-content .row{' +
+                  '.tgweb-mod-settings-row,.tgweb-author-channel-row{' +
                     rowCss +
                     rowBgCss +
                     'color:var(--flygram-text) !important;' +
                   '}' +
-                  '.btn-menu,.popup{' +
-                    'max-width:min(88vw, 340px) !important;' +
-                    'width:min(88vw, 340px) !important;' +
-                    'margin-inline:12px !important;' +
-                    'background:var(--flygram-surface) !important;' +
-                    'border:1px solid var(--flygram-divider) !important;' +
-                    'border-radius:22px !important;' +
-                    'box-shadow:0 20px 40px rgba(0,0,0,.18) !important;' +
-                    'overflow:hidden !important;' +
-                  '}' +
-                  '.btn-menu .btn-menu-item,.popup .btn-menu-item,.menu-item{' +
-                    'min-height:44px !important;' +
-                    'padding-top:8px !important;' +
-                    'padding-bottom:8px !important;' +
-                  '}' +
-                  '.btn-menu .btn-menu-items,.popup .btn-menu-items{' +
-                    'padding:6px !important;' +
-                  '}' +
-                  '.settings-container .row-title,.settings-container .row-subtitle,' +
-                  '.profile-content .row-title,.profile-content .subtitle,' +
-                  '.btn-menu-item-text,.btn-menu-item-auxiliary-text{' +
-                    'color:var(--flygram-text) !important;' +
-                  '}' +
-                  '.settings-container .row-subtitle,.profile-content .subtitle,.btn-menu-item-auxiliary-text{' +
-                    'color:var(--flygram-muted) !important;' +
-                  '}' +
-                  '.btn-menu-item .tgico,.profile-content .row-icon,.settings-container .row-icon{' +
+                  '.tgweb-mod-settings-row .row-icon,.tgweb-author-channel-row .row-icon{' +
                     'color:var(--flygram-accent) !important;' +
                   '}' +
-                  '.btn-primary,.btn-primary-transparent,.tgweb-auth-import-actions button{' +
+                  '.tgweb-auth-import-actions button,.tgweb-downloads-button{' +
                     'border-radius:14px !important;' +
                     'border:0 !important;' +
                     'background:' + primaryButtonBg + ' !important;' +
                     'color:' + primaryButtonText + ' !important;' +
                   '}' +
-                  '.tgweb-mod-settings-row,.tgweb-author-channel-row,.tgweb-downloads-row{' +
+                  '.tgweb-downloads-button{' +
+                    'box-shadow:0 10px 24px rgba(0,0,0,.16) !important;' +
+                  '}' +
+                  '.tgweb-downloads-badge{' +
+                    'background:var(--flygram-accent) !important;' +
+                    'color:#fff !important;' +
+                  '}' +
+                  '.tgweb-mod-settings-row,.tgweb-author-channel-row{' +
                     'background:var(--flygram-surface) !important;' +
                     'border:1px solid var(--flygram-divider) !important;' +
                     'border-radius:18px !important;' +
                   '}' +
-                  dividerRowsCss +
-                  '.chat-info,.media-viewer{' +
-                    'border-radius:18px !important;' +
-                  '}';
+                  dividerRowsCss;
               };
 
               var activeDownloads = {};
@@ -2626,14 +2634,26 @@ class MainActivity : ComponentActivity() {
               var ensureAuthImportButtons = function() {
                 var authRoot = document.getElementById('auth-pages') ||
                   document.querySelector('.auth-pages,.login-page,[class*=\"auth-pages\"],.page-signIn,.page-signQR,.page-signUp,.page-authCode,.page-password');
-                var chatVisible = !!document.querySelector(
-                  '.left-sidebar .chatlist .chatlist-chat,.chat-main .bubbles,.chat-input .input-message-input'
-                );
-                var authVisible = !!(authRoot &&
-                  authRoot.offsetParent !== null &&
+                var authVisible = !!(
+                  authRoot &&
+                  document.body &&
+                  document.body.classList &&
+                  document.body.classList.contains('has-auth-pages') &&
                   authRoot.getBoundingClientRect &&
-                  authRoot.getBoundingClientRect().height > 120);
-                var isAuthMode = !!authRoot && authVisible && !chatVisible;
+                  authRoot.getBoundingClientRect().height > 80
+                );
+                var activeAuthTab = null;
+                if (authRoot) {
+                  var authTabs = authRoot.querySelectorAll('.tabs-tab');
+                  for (var i = 0; i < authTabs.length; i++) {
+                    var tab = authTabs[i];
+                    if (tab && tab.offsetParent !== null && tab.getBoundingClientRect && tab.getBoundingClientRect().height > 80) {
+                      activeAuthTab = tab;
+                      break;
+                    }
+                  }
+                }
+                var isAuthMode = !!authRoot && authVisible;
                 var existing = document.querySelector('.tgweb-auth-import-actions');
                 if (!isAuthMode || !authRoot) {
                   if (existing) { existing.remove(); }
@@ -2652,6 +2672,10 @@ class MainActivity : ComponentActivity() {
                     '}' +
                     '.flygram-auth-logo-image{' +
                       'width:100%;height:100%;object-fit:cover;border-radius:50%;display:block;' +
+                    '}' +
+                    '.tgweb-auth-import-actions{' +
+                      'display:flex !important;flex-direction:column !important;gap:8px !important;' +
+                      'width:100% !important;max-width:320px !important;margin:18px auto 0 !important;' +
                     '}';
                   document.head.appendChild(authStyle);
                 }
@@ -2716,11 +2740,16 @@ class MainActivity : ComponentActivity() {
                 wrap.appendChild(makeButton('Импорт .session', '${SessionToolsActivity.ACTION_IMPORT_SESSION}'));
                 wrap.appendChild(makeButton('Импорт TData', '${SessionToolsActivity.ACTION_IMPORT_TDATA}'));
 
-                var host = authRoot.querySelector('.scrollable,.auth-page,.auth-pages') || authRoot;
-                var preferredAnchor = authImage && authImage.parentElement ? authImage.parentElement : null;
+                var host =
+                  (activeAuthTab && (activeAuthTab.querySelector('.container') || activeAuthTab)) ||
+                  authRoot.querySelector('#auth-pages > .scrollable,.scrollable,.auth-page,.auth-pages') ||
+                  authRoot;
+                var preferredAnchor =
+                  (host && host.querySelector && host.querySelector('.input-wrapper,.subtitle,.auth-image,.btn-primary,.input-field')) ||
+                  (authImage && authImage.parentElement ? authImage.parentElement : null);
                 if (!wrap.parentElement || wrap.parentElement !== host) {
-                  if (preferredAnchor && preferredAnchor.parentElement === host && preferredAnchor.nextSibling) {
-                    host.insertBefore(wrap, preferredAnchor.nextSibling);
+                  if (preferredAnchor && preferredAnchor.parentElement === host) {
+                    host.insertBefore(wrap, preferredAnchor.nextSibling || null);
                   } else {
                     host.appendChild(wrap);
                   }
