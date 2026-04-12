@@ -27,17 +27,18 @@ jobs:
 
       - name: Restore google-services.json from secret
         shell: bash
+        env:
+          GOOGLE_SERVICES_JSON_B64: ${{ secrets.GOOGLE_SERVICES_JSON_B64 }}
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
         run: |
           set -euo pipefail
           mkdir -p app
 
-          if [ -n "${{ secrets.GOOGLE_SERVICES_JSON_B64 }}" ]; then
-            echo "${{ secrets.GOOGLE_SERVICES_JSON_B64 }}" | base64 -d > app/google-services.json
+          if [ -n "${GOOGLE_SERVICES_JSON_B64:-}" ]; then
+            printf '%s' "$GOOGLE_SERVICES_JSON_B64" | base64 -d > app/google-services.json
             echo "google-services.json restored from GOOGLE_SERVICES_JSON_B64"
-          elif [ -n "${{ secrets.GOOGLE_SERVICES_JSON }}" ]; then
-            cat > app/google-services.json <<'EOF'
-            ${{ secrets.GOOGLE_SERVICES_JSON }}
-            EOF
+          elif [ -n "${GOOGLE_SERVICES_JSON:-}" ]; then
+            printf '%s' "$GOOGLE_SERVICES_JSON" > app/google-services.json
             echo "google-services.json restored from GOOGLE_SERVICES_JSON"
           else
             echo "google-services.json secret not provided; build will continue without Firebase config"
