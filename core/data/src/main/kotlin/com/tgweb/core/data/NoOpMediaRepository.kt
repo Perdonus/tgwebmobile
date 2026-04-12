@@ -9,6 +9,32 @@ class NoOpMediaRepository : MediaRepository {
         return Result.failure(IllegalStateException("Media module not initialized"))
     }
 
+    override suspend fun beginBridgeDownload(
+        transferId: String,
+        fileId: String,
+        fileName: String?,
+        mimeType: String,
+        expectedSizeBytes: Long,
+        sourceUrl: String?,
+    ): Result<Unit> {
+        return Result.failure(IllegalStateException("Media module not initialized"))
+    }
+
+    override suspend fun appendBridgeDownloadChunk(
+        transferId: String,
+        base64Chunk: String,
+    ): Result<Int> {
+        return Result.failure(IllegalStateException("Media module not initialized"))
+    }
+
+    override suspend fun finishBridgeDownload(transferId: String): Result<String> {
+        return Result.failure(IllegalStateException("Media module not initialized"))
+    }
+
+    override suspend fun cancelBridgeDownload(transferId: String, reason: String?): Boolean {
+        return false
+    }
+
     override suspend fun prefetch(chatId: Long, window: Int) {
         // No-op until real media prefetch strategy is wired with TDLib file API.
     }
