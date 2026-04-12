@@ -6,6 +6,8 @@ import com.tgweb.core.db.dao.SyncStateDao
 import com.tgweb.core.db.entity.ChatEntity
 import com.tgweb.core.db.entity.MessageEntity
 import com.tgweb.core.db.entity.SyncStateEntity
+import com.tgweb.core.tdlib.IncomingMessageEvent
+import com.tgweb.core.tdlib.RemoteDialog
 import com.tgweb.core.tdlib.TdLibGateway
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -26,33 +28,8 @@ class ChatRepositoryImpl(
     init {
         scope.launch {
             tdLibGateway.observeIncomingMessages().collect { event ->
-                val now = System.currentTimeMillis()
-                messageDao.upsertAll(
-                    listOf(
-                        MessageEntity(
-                            messageId = event.messageId,
-                            chatId = event.chatId,
-                            senderUserId = event.senderUserId,
-                            text = event.text,
-                            status = "received",
-                            createdAt = event.createdAt,
-                            updatedAt = now,
-                        )
-                    )
-                )
-
-                runCatching {
-                    AppRepositories.notificationService.showMessageNotification(
-                        MessageItem(
-                            messageId = event.messageId,
-                            chatId = event.chatId,
-                            senderUserId = event.senderUserId,
-                            text = event.text,
-                            status = "received",
-                            createdAt = event.createdAt,
-                        ),
-                    )
-                }
+                runCatching { ingestTdLibMessage(event) }
+                    .onFailure { DebugLogStore.logError("TDLIB_MSG", "ingestTdLibMessage failed", it) }
             }
         }
     }
@@ -90,6 +67,20 @@ class ChatRepositoryImpl(
     override suspend fun sendMessage(chatId: Long, draft: String) {
         val localMessageId = System.currentTimeMillis()
         val now = System.currentTimeMillis()
+        val existingChat = chatDao.getChat(chatId)
+        val chatTitle = existingChat?.title ?: "Chat $chatId"
+        chatDao.upsertAll(
+            listOf(
+                ChatEntity(
+                    chatId = chatId,
+                    title = chatTitle,
+                    unreadCount = existingChat?.unreadCount ?: 0,
+                    lastMessagePreview = draft,
+                    lastMessageAt = now,
+                    avatarFileId = existingChat?.avatarFileId,
+                )
+            )
+        )
         messageDao.upsertAll(
             listOf(
                 MessageEntity(
@@ -116,22 +107,100 @@ class ChatRepositoryImpl(
     }
 
     override suspend fun markRead(chatId: Long, messageId: Long) {
+        tdLibGateway.markRead(chatId, messageId)
         val chat = chatDao.getChat(chatId) ?: return
         chatDao.upsertAll(listOf(chat.copy(unreadCount = 0)))
+        postUnreadState()
     }
 
     override suspend fun ingestPushMessage(chatId: Long, messageId: Long, preview: String) {
-        val now = System.currentTimeMillis()
         val existingChat = chatDao.getChat(chatId)
-        val updatedUnread = (existingChat?.unreadCount ?: 0) + 1
+        val title = existingChat?.title ?: "Chat $chatId"
+        ingestMessage(
+            MessageItem(
+                messageId = messageId,
+                chatId = chatId,
+                senderUserId = 0L,
+                text = preview,
+                status = "received",
+                createdAt = System.currentTimeMillis(),
+                chatTitle = title,
+                peerType = PeerType.UNKNOWN,
+            ),
+            incrementUnread = true,
+            source = "push",
+        )
+    }
+
+    override suspend fun syncNow(reason: String) {
+        tdLibGateway.synchronize(reason)
+        val dialogs = tdLibGateway.fetchDialogs(limit = 200)
+        chatDao.upsertAll(dialogs.map { it.toEntity() })
+        val unreadCount = dialogs.sumOf { it.unreadCount }
+        AppRepositories.postSyncState(
+            lastSyncAt = System.currentTimeMillis(),
+            unreadCount = unreadCount,
+        )
+        syncStateDao.upsert(
+            SyncStateEntity(
+                key = "last_sync",
+                value = reason,
+                updatedAt = System.currentTimeMillis(),
+            )
+        )
+    }
+
+    private suspend fun ingestTdLibMessage(event: IncomingMessageEvent) {
+        val item = MessageItem(
+            messageId = event.messageId,
+            chatId = event.chatId,
+            senderUserId = event.senderUserId,
+            text = event.text,
+            status = "received",
+            createdAt = event.createdAt,
+            chatTitle = event.chatTitle.ifBlank { null },
+            senderName = event.senderName.ifBlank { null },
+            peerType = event.peerType,
+            silent = event.silent,
+            mentioned = event.mentioned,
+        )
+        ingestMessage(
+            message = item,
+            incrementUnread = !event.silent,
+            source = "tdlib",
+        )
+        AppRepositories.postPushMessageReceived(
+            chatId = item.chatId,
+            messageId = item.messageId,
+            preview = item.text,
+        )
+        AppRepositories.postNativeMessageHint(item)
+        AppRepositories.notificationService.handleIncomingMessage(item)
+    }
+
+    private suspend fun ingestMessage(
+        message: MessageItem,
+        incrementUnread: Boolean,
+        source: String,
+    ) {
+        val now = System.currentTimeMillis()
+        val existingChat = chatDao.getChat(message.chatId)
+        val updatedUnread = when {
+            incrementUnread -> (existingChat?.unreadCount ?: 0) + 1
+            else -> existingChat?.unreadCount ?: 0
+        }
+        val title = message.chatTitle?.takeIf { it.isNotBlank() }
+            ?: existingChat?.title
+            ?: "Chat ${message.chatId}"
+
         chatDao.upsertAll(
             listOf(
                 ChatEntity(
-                    chatId = chatId,
-                    title = existingChat?.title ?: "Chat $chatId",
+                    chatId = message.chatId,
+                    title = title,
                     unreadCount = updatedUnread,
-                    lastMessagePreview = preview,
-                    lastMessageAt = now,
+                    lastMessagePreview = message.text,
+                    lastMessageAt = message.createdAt,
                     avatarFileId = existingChat?.avatarFileId,
                 )
             )
@@ -140,42 +209,40 @@ class ChatRepositoryImpl(
         messageDao.upsertAll(
             listOf(
                 MessageEntity(
-                    messageId = messageId,
-                    chatId = chatId,
-                    senderUserId = 0L,
-                    text = preview,
-                    status = "received",
-                    createdAt = now,
+                    messageId = message.messageId,
+                    chatId = message.chatId,
+                    senderUserId = message.senderUserId,
+                    text = message.text,
+                    status = message.status,
+                    createdAt = message.createdAt,
                     updatedAt = now,
+                    mediaFileId = message.mediaFileId,
                 )
             )
+        )
+
+        DebugLogStore.log(
+            "MSG_STORE",
+            "Ingested $source message chatId=${message.chatId} messageId=${message.messageId} unread=$updatedUnread",
+        )
+        postUnreadState()
+    }
+
+    private suspend fun postUnreadState() {
+        val unreadCount = chatDao.listForBootstrap(limit = 200).sumOf { it.unreadCount }
+        AppRepositories.postSyncState(
+            lastSyncAt = System.currentTimeMillis(),
+            unreadCount = unreadCount,
         )
     }
 
-    override suspend fun syncNow(reason: String) {
-        tdLibGateway.synchronize(reason)
-        val dialogs = tdLibGateway.fetchDialogs(limit = 200)
-        chatDao.upsertAll(
-            dialogs.map {
-                ChatEntity(
-                    chatId = it.chatId,
-                    title = it.title,
-                    unreadCount = it.unreadCount,
-                    lastMessagePreview = it.lastMessagePreview,
-                    lastMessageAt = it.lastMessageAt,
-                )
-            }
-        )
-        AppRepositories.postSyncState(
-            lastSyncAt = System.currentTimeMillis(),
-            unreadCount = dialogs.sumOf { it.unreadCount },
-        )
-        syncStateDao.upsert(
-            SyncStateEntity(
-                key = "last_sync",
-                value = reason,
-                updatedAt = System.currentTimeMillis(),
-            )
+    private fun RemoteDialog.toEntity(): ChatEntity {
+        return ChatEntity(
+            chatId = chatId,
+            title = title,
+            unreadCount = unreadCount,
+            lastMessagePreview = lastMessagePreview,
+            lastMessageAt = lastMessageAt,
         )
     }
 }

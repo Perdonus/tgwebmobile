@@ -1,11 +1,18 @@
 package com.tgweb.core.data
 
+import com.tgweb.core.tdlib.TdLibGateway
+import com.tgweb.core.webbridge.BackgroundStateSnapshot
 import com.tgweb.core.webbridge.BridgeEvent
 import com.tgweb.core.webbridge.BridgeEventTypes
 import com.tgweb.core.webbridge.ProxyConfigSnapshot
 import com.tgweb.core.webbridge.WebBootstrapSnapshot
 import com.tgweb.core.webbridge.WebBridgeContract
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /**
  * Lightweight service locator for workers/services that are created by the Android framework.
@@ -22,12 +29,16 @@ object AppRepositories {
         val updatedAt: Long,
     )
 
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     lateinit var chatRepository: ChatRepository
     lateinit var mediaRepository: MediaRepository
     lateinit var notificationService: NotificationService
+    lateinit var tdLibGateway: TdLibGateway
     lateinit var webBridge: WebBridgeContract
     lateinit var webBootstrapProvider: suspend () -> WebBootstrapSnapshot
     lateinit var persistProxyState: suspend (ProxyConfigSnapshot) -> Unit
+    lateinit var persistBackgroundState: suspend (BackgroundStateSnapshot) -> Unit
 
     @Volatile
     private var proxyState: ProxyConfigSnapshot = ProxyConfigSnapshot()
@@ -41,7 +52,12 @@ object AppRepositories {
     @Volatile
     private var interfaceScalePercent: Int = 100
 
+    @Volatile
+    private var backgroundState: BackgroundStateSnapshot = BackgroundStateSnapshot()
+
     private val downloadStates = ConcurrentHashMap<String, DownloadStatusSnapshot>()
+    private val proxyStateListeners = CopyOnWriteArrayList<(ProxyConfigSnapshot) -> Unit>()
+    private val backgroundStateListeners = CopyOnWriteArrayList<(BackgroundStateSnapshot) -> Unit>()
 
     fun postPushMessageReceived(chatId: Long, messageId: Long, preview: String) {
         if (!::webBridge.isInitialized) return
@@ -52,6 +68,23 @@ object AppRepositories {
                     "chatId" to chatId.toString(),
                     "messageId" to messageId.toString(),
                     "preview" to preview,
+                ),
+            )
+        )
+    }
+
+    fun postNativeMessageHint(message: MessageItem) {
+        if (!::webBridge.isInitialized) return
+        webBridge.postToWeb(
+            BridgeEvent(
+                type = BridgeEventTypes.NATIVE_MESSAGE_HINT,
+                payload = mapOf(
+                    "chatId" to message.chatId.toString(),
+                    "messageId" to message.messageId.toString(),
+                    "preview" to message.text,
+                    "chatTitle" to (message.chatTitle ?: ""),
+                    "senderName" to (message.senderName ?: ""),
+                    "peerType" to message.peerType.name,
                 ),
             )
         )
@@ -133,14 +166,26 @@ object AppRepositories {
     }
 
     fun postSyncState(lastSyncAt: Long, unreadCount: Int) {
+        if (::webBridge.isInitialized) {
+            webBridge.postToWeb(
+                BridgeEvent(
+                    type = BridgeEventTypes.SYNC_STATE,
+                    payload = mapOf(
+                        "lastSyncAt" to lastSyncAt.toString(),
+                        "unreadCount" to unreadCount.toString(),
+                    ),
+                )
+            )
+        }
+        postNativeUnreadState(unreadCount)
+    }
+
+    fun postNativeUnreadState(unreadCount: Int) {
         if (!::webBridge.isInitialized) return
         webBridge.postToWeb(
             BridgeEvent(
-                type = BridgeEventTypes.SYNC_STATE,
-                payload = mapOf(
-                    "lastSyncAt" to lastSyncAt.toString(),
-                    "unreadCount" to unreadCount.toString(),
-                ),
+                type = BridgeEventTypes.NATIVE_UNREAD_STATE,
+                payload = mapOf("unreadCount" to unreadCount.toString()),
             )
         )
     }
@@ -150,10 +195,70 @@ object AppRepositories {
         if (::persistProxyState.isInitialized) {
             persistProxyState(state)
         }
+        proxyStateListeners.forEach { listener ->
+            runCatching { listener(state) }
+                .onFailure { DebugLogStore.logError("PROXY", "Proxy listener failed", it) }
+        }
         postProxyState(state)
     }
 
     fun getProxyState(): ProxyConfigSnapshot = proxyState
+
+    fun registerProxyStateListener(listener: (ProxyConfigSnapshot) -> Unit): () -> Unit {
+        proxyStateListeners.add(listener)
+        runCatching { listener(proxyState) }
+            .onFailure { DebugLogStore.logError("PROXY", "Proxy listener initial dispatch failed", it) }
+        return { proxyStateListeners.remove(listener) }
+    }
+
+    fun getBackgroundState(): BackgroundStateSnapshot = backgroundState
+
+    fun registerBackgroundStateListener(listener: (BackgroundStateSnapshot) -> Unit): () -> Unit {
+        backgroundStateListeners.add(listener)
+        runCatching { listener(backgroundState) }
+            .onFailure { DebugLogStore.logError("TDLIB", "Background listener initial dispatch failed", it) }
+        return { backgroundStateListeners.remove(listener) }
+    }
+
+    fun postBackgroundState(state: BackgroundStateSnapshot) {
+        backgroundState = state
+        if (::persistBackgroundState.isInitialized) {
+            scope.launch {
+                runCatching { persistBackgroundState(state) }
+                    .onFailure { DebugLogStore.logError("TDLIB", "Persist background state failed", it) }
+            }
+        }
+        backgroundStateListeners.forEach { listener ->
+            runCatching { listener(state) }
+                .onFailure { DebugLogStore.logError("TDLIB", "Background listener failed", it) }
+        }
+        if (!::webBridge.isInitialized) return
+        webBridge.postToWeb(
+            BridgeEvent(
+                type = BridgeEventTypes.BACKGROUND_STATE,
+                payload = mapOf(
+                    "running" to state.running.toString(),
+                    "connected" to state.connected.toString(),
+                    "authorized" to state.authorized.toString(),
+                    "syncing" to state.syncing.toString(),
+                    "transportLabel" to state.transportLabel,
+                    "details" to state.details,
+                    "lastEventAt" to state.lastEventAt.toString(),
+                ),
+            )
+        )
+        webBridge.postToWeb(
+            BridgeEvent(
+                type = BridgeEventTypes.TDLIB_AUTH_STATE,
+                payload = mapOf(
+                    "authorized" to state.authorized.toString(),
+                    "running" to state.running.toString(),
+                    "connected" to state.connected.toString(),
+                    "details" to state.details,
+                ),
+            )
+        )
+    }
 
     fun postProxyState(state: ProxyConfigSnapshot = proxyState) {
         if (!::webBridge.isInitialized) return
@@ -211,8 +316,10 @@ object AppRepositories {
         return ::chatRepository.isInitialized &&
             ::mediaRepository.isInitialized &&
             ::notificationService.isInitialized &&
+            ::tdLibGateway.isInitialized &&
             ::webBridge.isInitialized &&
             ::webBootstrapProvider.isInitialized &&
-            ::persistProxyState.isInitialized
+            ::persistProxyState.isInitialized &&
+            ::persistBackgroundState.isInitialized
     }
 }

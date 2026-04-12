@@ -1,5 +1,12 @@
 package com.tgweb.core.data
 
+enum class PeerType {
+    PRIVATE,
+    GROUP,
+    CHANNEL,
+    UNKNOWN,
+}
+
 data class ChatSummary(
     val chatId: Long,
     val title: String,
@@ -16,6 +23,11 @@ data class MessageItem(
     val status: String,
     val createdAt: Long,
     val mediaFileId: String? = null,
+    val chatTitle: String? = null,
+    val senderName: String? = null,
+    val peerType: PeerType = PeerType.UNKNOWN,
+    val silent: Boolean = false,
+    val mentioned: Boolean = false,
 )
 
 data class MediaDescriptor(

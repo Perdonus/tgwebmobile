@@ -37,6 +37,7 @@ interface MediaRepository {
 interface NotificationService {
     suspend fun registerDeviceToken(fcmToken: String)
     suspend fun handlePush(payload: Map<String, String>)
+    suspend fun handleIncomingMessage(event: MessageItem)
     fun showMessageNotification(event: MessageItem)
     suspend fun sendServerTestPush(): PushDebugResult
 }

@@ -17,6 +17,7 @@ import androidx.core.app.NotificationManagerCompat
 import com.tgweb.core.data.AppRepositories
 import com.tgweb.core.data.DebugLogStore
 import com.tgweb.core.data.MediaRepository
+import com.tgweb.core.data.ProxyTransportUtils
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -28,8 +29,6 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.RandomAccessFile
 import java.net.HttpURLConnection
-import java.net.InetSocketAddress
-import java.net.Proxy
 import java.net.URL
 import java.util.zip.ZipFile
 
@@ -809,18 +808,15 @@ class MediaRepositoryImpl(
 
     private fun openConnection(url: String): HttpURLConnection {
         val proxyState = AppRepositories.getProxyState()
-        val proxy = when {
-            !proxyState.enabled -> Proxy.NO_PROXY
-            proxyState.type == com.tgweb.core.webbridge.ProxyType.HTTP -> {
-                Proxy(Proxy.Type.HTTP, InetSocketAddress(proxyState.host, proxyState.port))
-            }
-            proxyState.type == com.tgweb.core.webbridge.ProxyType.SOCKS5 ||
-                proxyState.type == com.tgweb.core.webbridge.ProxyType.MTPROTO -> {
-                Proxy(Proxy.Type.SOCKS, InetSocketAddress(proxyState.host, proxyState.port))
-            }
-            else -> Proxy.NO_PROXY
+        if (proxyState.enabled && proxyState.type == com.tgweb.core.webbridge.ProxyType.MTPROTO) {
+            DebugLogStore.log(
+                "DOWNLOAD_HTTP",
+                "MTProto proxy is active; Java HTTP stack falls back to DIRECT for media url=$url",
+            )
         }
-        return URL(url).openConnection(proxy) as HttpURLConnection
+        return (URL(url).openConnection(ProxyTransportUtils.buildNetworkProxy(proxyState)) as HttpURLConnection).apply {
+            ProxyTransportUtils.applyProxyAuth(this, proxyState)
+        }
     }
 
     private fun defaultUserAgent(): String {

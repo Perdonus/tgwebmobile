@@ -11,30 +11,41 @@ import android.graphics.Color
 import android.os.Build
 import android.provider.Settings
 import android.security.NetworkSecurityPolicy
-import androidx.core.content.ContextCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.app.Person
+import androidx.core.content.ContextCompat
+import com.google.firebase.messaging.FirebaseMessaging
 import com.tgweb.core.data.AppRepositories
 import com.tgweb.core.data.DebugLogStore
 import com.tgweb.core.data.MessageItem
 import com.tgweb.core.data.NotificationService
+import com.tgweb.core.data.PeerType
 import com.tgweb.core.data.PushDebugResult
+import com.tgweb.core.data.ProxyTransportUtils
+import com.tgweb.core.webbridge.ProxyConfigSnapshot
 import com.tgweb.core.webbridge.ProxyType
-import com.google.firebase.messaging.FirebaseMessaging
+import java.net.HttpURLConnection
+import java.net.URL
+import java.util.LinkedHashMap
+import java.util.UUID
+import kotlin.coroutines.resume
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.InetSocketAddress
-import java.net.Proxy
-import java.net.URL
-import java.util.UUID
-import kotlin.coroutines.resume
 
 class AndroidNotificationService(
     private val context: Context,
 ) : NotificationService {
+
+    private val recentNotificationKeys = object : LinkedHashMap<String, Long>(512, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Long>?): Boolean {
+            return size > 512
+        }
+    }
+    private val notificationLock = Any()
+    private val activeChatNotificationIds = linkedSetOf<Int>()
 
     private val deviceId: String by lazy {
         val secureId = Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)
@@ -76,26 +87,37 @@ class AndroidNotificationService(
         val text = payload["text"].orEmpty()
         val messageId = payload["message_id"]?.toLongOrNull() ?: System.currentTimeMillis()
         if (chatId != 0L && text.isNotBlank()) {
+            val message = MessageItem(
+                messageId = messageId,
+                chatId = chatId,
+                senderUserId = 0L,
+                text = text,
+                status = "received",
+                createdAt = System.currentTimeMillis(),
+                chatTitle = payload["chat_title"],
+                senderName = payload["sender_name"],
+                peerType = payload["peer_type"]?.let(::peerTypeFromWire) ?: PeerType.UNKNOWN,
+                silent = payload["silent"].equals("true", ignoreCase = true),
+                mentioned = payload["mentioned"].equals("true", ignoreCase = true),
+            )
             runCatching {
                 AppRepositories.chatRepository.ingestPushMessage(chatId = chatId, messageId = messageId, preview = text)
                 AppRepositories.postPushMessageReceived(chatId = chatId, messageId = messageId, preview = text)
+                AppRepositories.postNativeMessageHint(message)
             }.onFailure {
                 DebugLogStore.log(
                     "PUSH_RECV",
                     "ingestPushMessage failed: ${it::class.java.simpleName}: ${it.message}",
                 )
             }
-            showMessageNotification(
-                MessageItem(
-                    messageId = messageId,
-                    chatId = chatId,
-                    senderUserId = 0L,
-                    text = text,
-                    status = "received",
-                    createdAt = System.currentTimeMillis(),
-                )
-            )
+            handleIncomingMessage(message)
             sendAck(messageId = messageId.toString())
+        }
+    }
+
+    override suspend fun handleIncomingMessage(event: MessageItem) {
+        withContext(Dispatchers.Main) {
+            showMessageNotification(event)
         }
     }
 
@@ -139,7 +161,7 @@ class AndroidNotificationService(
             }
         } else {
             append("FCM token unavailable. Sending by known deviceId only.")
-            append("Note: until Firebase token exists on device, real push delivery is impossible.")
+            append("Note: until Firebase token exists on device, server-side push debug stays fallback-only.")
         }
 
         val messageId = System.currentTimeMillis().toString()
@@ -205,33 +227,71 @@ class AndroidNotificationService(
             DebugLogStore.log("PUSH_NOTIFY", "Notification skipped due to disabled permission/channel")
             return
         }
+        if (isDuplicate(event)) {
+            DebugLogStore.log("PUSH_NOTIFY", "Dropped duplicate notification chatId=${event.chatId} messageId=${event.messageId}")
+            return
+        }
 
-        val intent = Intent(context, Class.forName("com.tgweb.app.MainActivity")).apply {
+        val contentTitle = event.chatTitle?.ifBlank { null }
+            ?: when (event.peerType) {
+                PeerType.PRIVATE -> event.senderName?.ifBlank { null } ?: "Dialog ${event.chatId}"
+                else -> "Chat ${event.chatId}"
+            }
+        val senderLabel = event.senderName?.ifBlank { null }
+            ?: if (event.peerType == PeerType.PRIVATE) contentTitle else null
+        val contentText = if (event.peerType != PeerType.PRIVATE && !senderLabel.isNullOrBlank() && senderLabel != contentTitle) {
+            "$senderLabel: ${event.text}"
+        } else {
+            event.text
+        }
+
+        val targetIntent = Intent(context, Class.forName("com.tgweb.app.MainActivity")).apply {
             putExtra("chat_id", event.chatId)
             putExtra("message_id", event.messageId)
             putExtra("preview", event.text)
             addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
         }
-        val pendingIntent = PendingIntent.getActivity(
+        val targetPendingIntent = PendingIntent.getActivity(
             context,
-            event.chatId.toInt(),
-            intent,
+            event.chatId.hashCode(),
+            targetIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
 
-        val notification = NotificationCompat.Builder(context, CHANNEL_MESSAGES)
+        val selfPerson = Person.Builder().setName("FlyGram").build()
+        val senderPerson = Person.Builder().setName(senderLabel ?: contentTitle).build()
+        val style = NotificationCompat.MessagingStyle(selfPerson)
+            .setConversationTitle(
+                when (event.peerType) {
+                    PeerType.GROUP, PeerType.CHANNEL -> contentTitle
+                    else -> null
+                }
+            )
+            .addMessage(event.text, event.createdAt, senderPerson)
+
+        val channelId = if (event.silent) CHANNEL_SILENT else CHANNEL_MESSAGES
+        val notificationId = event.chatId.hashCode()
+        val notification = NotificationCompat.Builder(context, channelId)
             .setSmallIcon(android.R.drawable.stat_notify_chat)
-            .setContentTitle("Chat ${event.chatId}")
-            .setContentText(event.text)
+            .setContentTitle(contentTitle)
+            .setContentText(contentText)
+            .setStyle(style)
             .setAutoCancel(true)
-            .setContentIntent(pendingIntent)
+            .setContentIntent(targetPendingIntent)
             .setColor(getNotificationColor())
             .setColorized(true)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setOnlyAlertOnce(false)
+            .setPriority(if (event.silent) NotificationCompat.PRIORITY_DEFAULT else NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+            .setGroup(GROUP_MESSAGES)
             .build()
 
-        NotificationManagerCompat.from(context).notify(event.chatId.toInt(), notification)
-        DebugLogStore.log("PUSH_NOTIFY", "notify() posted id=${event.chatId.toInt()} title=Chat ${event.chatId}")
+        NotificationManagerCompat.from(context).notify(notificationId, notification)
+        synchronized(notificationLock) {
+            activeChatNotificationIds += notificationId
+        }
+        postGroupSummary()
+        DebugLogStore.log("PUSH_NOTIFY", "notify() posted id=$notificationId title=$contentTitle peerType=${event.peerType}")
     }
 
     private suspend fun sendAck(messageId: String) {
@@ -299,7 +359,6 @@ class AndroidNotificationService(
                 }
                 return trace
             }
-            // Retry only malformed-request class to stay compatible with older servers.
             if (trace.code != 400) {
                 return trace
             }
@@ -381,21 +440,13 @@ class AndroidNotificationService(
         }
     }
 
-    private fun openConnection(url: String, proxyState: com.tgweb.core.webbridge.ProxyConfigSnapshot): HttpURLConnection {
-        val proxy = when {
-            !proxyState.enabled -> Proxy.NO_PROXY
-            proxyState.type == ProxyType.HTTP -> {
-                Proxy(Proxy.Type.HTTP, InetSocketAddress(proxyState.host, proxyState.port))
-            }
-            proxyState.type == ProxyType.SOCKS5 -> {
-                Proxy(Proxy.Type.SOCKS, InetSocketAddress(proxyState.host, proxyState.port))
-            }
-            else -> Proxy.NO_PROXY
+    private fun openConnection(url: String, proxyState: ProxyConfigSnapshot): HttpURLConnection {
+        return (URL(url).openConnection(ProxyTransportUtils.buildNetworkProxy(proxyState)) as HttpURLConnection).apply {
+            ProxyTransportUtils.applyProxyAuth(this, proxyState)
         }
-        return URL(url).openConnection(proxy) as HttpURLConnection
     }
 
-    private fun proxyDebugSummary(proxyState: com.tgweb.core.webbridge.ProxyConfigSnapshot): String {
+    private fun proxyDebugSummary(proxyState: ProxyConfigSnapshot): String {
         if (!proxyState.enabled || proxyState.type == ProxyType.DIRECT) return "direct"
         val hasAuth = !proxyState.username.isNullOrBlank() || !proxyState.password.isNullOrBlank()
         val hasSecret = !proxyState.secret.isNullOrBlank()
@@ -425,6 +476,49 @@ class AndroidNotificationService(
         return runCatching { Color.parseColor(raw) }.getOrDefault(Color.parseColor("#3390EC"))
     }
 
+    private fun isDuplicate(event: MessageItem): Boolean {
+        val key = "${event.chatId}:${event.messageId}"
+        synchronized(notificationLock) {
+            if (recentNotificationKeys.containsKey(key)) {
+                return true
+            }
+            recentNotificationKeys[key] = System.currentTimeMillis()
+        }
+        return false
+    }
+
+    private fun postGroupSummary() {
+        val activeCount = synchronized(notificationLock) { activeChatNotificationIds.size }
+        if (activeCount <= 0) return
+
+        val launchIntent = Intent(context, Class.forName("com.tgweb.app.MainActivity")).apply {
+            addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        }
+        val launchPendingIntent = PendingIntent.getActivity(
+            context,
+            SUMMARY_NOTIFICATION_ID,
+            launchIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+
+        val summary = NotificationCompat.Builder(context, CHANNEL_MESSAGES)
+            .setSmallIcon(android.R.drawable.stat_notify_chat)
+            .setContentTitle("FlyGram")
+            .setContentText("Активные чаты: $activeCount")
+            .setContentIntent(launchPendingIntent)
+            .setGroup(GROUP_MESSAGES)
+            .setGroupSummary(true)
+            .setSilent(true)
+            .setColor(getNotificationColor())
+            .build()
+
+        NotificationManagerCompat.from(context).notify(SUMMARY_NOTIFICATION_ID, summary)
+    }
+
+    private fun peerTypeFromWire(raw: String): PeerType {
+        return runCatching { PeerType.valueOf(raw.trim().uppercase()) }.getOrDefault(PeerType.UNKNOWN)
+    }
+
     fun ensureChannels() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
 
@@ -439,12 +533,13 @@ class AndroidNotificationService(
 
     companion object {
         private const val PREFS = "tgweb_runtime"
-        // Hidden runtime override key (no user-facing setting).
         private const val KEY_BACKEND_BASE_URL = "push_backend_url"
         private const val HEADER_SHARED_SECRET = "X-FlyGram-Key"
         private const val HEADER_APP_ID = "X-FlyGram-App"
         private const val HEADER_APP_ID_VALUE = "android"
         private const val KEY_NOTIFICATION_COLOR = "notification_color"
+        private const val GROUP_MESSAGES = "flygram_messages_group"
+        private const val SUMMARY_NOTIFICATION_ID = 84001
         const val CHANNEL_MESSAGES = "flygram_messages"
         const val CHANNEL_SILENT = "flygram_silent"
         const val CHANNEL_DOWNLOADS = "flygram_downloads"

@@ -33,6 +33,7 @@ dependencies {
     implementation(project(":core:data"))
     implementation(project(":core:sync"))
     implementation("androidx.core:core-ktx:1.13.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("com.google.firebase:firebase-messaging-ktx:24.1.0")
     implementation("androidx.work:work-runtime-ktx:2.9.1")
 }

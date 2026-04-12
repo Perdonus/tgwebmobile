@@ -22,8 +22,12 @@ class PushProcessWorker(
         val payload = inputData.keyValueMap.mapValues { (_, v) -> v?.toString().orEmpty() }
         DebugLogStore.log("SYNC_WORK", "PushProcessWorker payload keys=${payload.keys.joinToString(",")}")
         return runCatching {
-            AppRepositories.notificationService.handlePush(payload)
-            AppRepositories.chatRepository.syncNow(reason = "push")
+            if (payload.isNotEmpty()) {
+                AppRepositories.notificationService.handlePush(payload)
+            }
+            AppRepositories.chatRepository.syncNow(
+                reason = if (payload.isEmpty()) "recovery" else "push_reconcile",
+            )
             DebugLogStore.log("SYNC_WORK", "PushProcessWorker success")
             Result.success()
         }.getOrElse {

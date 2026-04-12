@@ -10,9 +10,30 @@ import android.graphics.Color
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
+import com.tgweb.core.data.AppRepositories
+import com.tgweb.core.data.DebugLogStore
 import com.tgweb.core.sync.SyncScheduler
+import com.tgweb.core.tdlib.TdAuthorizationState
+import com.tgweb.core.tdlib.TdConnectionState
+import com.tgweb.core.tdlib.TdRuntimeState
+import com.tgweb.core.webbridge.BackgroundStateSnapshot
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 
 class KeepAliveService : Service() {
+
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var proxyListenerDisposer: (() -> Unit)? = null
+    private var backgroundStateListenerDisposer: (() -> Unit)? = null
+    private var runtimeCollectorJob: Job? = null
+    private var startupJob: Job? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -20,8 +41,10 @@ class KeepAliveService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        startForeground(NOTIFICATION_ID, buildNotification())
+        startForeground(NOTIFICATION_ID, buildNotification(AppRepositories.getBackgroundState()))
         SyncScheduler.schedulePeriodic(this)
+        AppRepositories.postKeepAliveState(true)
+        startBackgroundCore()
         return START_STICKY
     }
 
@@ -32,14 +55,117 @@ class KeepAliveService : Service() {
         }
     }
 
+    override fun onDestroy() {
+        proxyListenerDisposer?.invoke()
+        proxyListenerDisposer = null
+        backgroundStateListenerDisposer?.invoke()
+        backgroundStateListenerDisposer = null
+        runtimeCollectorJob?.cancel()
+        runtimeCollectorJob = null
+        startupJob?.cancel()
+        startupJob = null
+        runBlocking(Dispatchers.IO) {
+            if (AppRepositories.isInitialized()) {
+                runCatching { AppRepositories.tdLibGateway.stop() }
+                    .onFailure { DebugLogStore.logError("TDLIB", "Failed to stop background core", it) }
+            }
+            AppRepositories.postBackgroundState(
+                BackgroundStateSnapshot(
+                    running = false,
+                    connected = false,
+                    authorized = false,
+                    syncing = false,
+                    transportLabel = "stopped",
+                    details = "Background core stopped",
+                    lastEventAt = System.currentTimeMillis(),
+                )
+            )
+        }
+        serviceScope.cancel()
+        super.onDestroy()
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
-    private fun buildNotification(): Notification {
+    private fun startBackgroundCore() {
+        if (!AppRepositories.isInitialized()) {
+            DebugLogStore.log("TDLIB", "KeepAliveService start skipped: repositories not initialized")
+            return
+        }
+
+        backgroundStateListenerDisposer?.invoke()
+        backgroundStateListenerDisposer = AppRepositories.registerBackgroundStateListener { snapshot ->
+            NotificationManagerCompat.from(this).notify(NOTIFICATION_ID, buildNotification(snapshot))
+        }
+
+        runtimeCollectorJob?.cancel()
+        runtimeCollectorJob = serviceScope.launch {
+            AppRepositories.tdLibGateway.observeRuntimeState().collectLatest { runtime ->
+                val snapshot = runtime.toBackgroundSnapshot()
+                DebugLogStore.log(
+                    "TDLIB",
+                    "Runtime state running=${snapshot.running} connected=${snapshot.connected} authorized=${snapshot.authorized} syncing=${snapshot.syncing} transport=${snapshot.transportLabel} details=${snapshot.details}",
+                )
+                AppRepositories.postBackgroundState(snapshot)
+            }
+        }
+
+        proxyListenerDisposer?.invoke()
+        proxyListenerDisposer = AppRepositories.registerProxyStateListener { proxy ->
+            serviceScope.launch {
+                DebugLogStore.log(
+                    "TDLIB",
+                    "Applying proxy to background core: enabled=${proxy.enabled} type=${proxy.type} host=${proxy.host}:${proxy.port}",
+                )
+                runCatching { AppRepositories.tdLibGateway.setProxy(proxy) }
+                    .onFailure { DebugLogStore.logError("TDLIB", "Proxy apply to background core failed", it) }
+            }
+        }
+
+        startupJob?.cancel()
+        startupJob = serviceScope.launch {
+            runCatching {
+                DebugLogStore.log("TDLIB", "Starting background core from KeepAliveService")
+                AppRepositories.tdLibGateway.start()
+                AppRepositories.chatRepository.syncNow(reason = "keep_alive_start")
+                DebugLogStore.log("TDLIB", "Background core initial sync done")
+            }.onFailure {
+                DebugLogStore.logError("TDLIB", "Background core start failed", it)
+                AppRepositories.postBackgroundState(
+                    BackgroundStateSnapshot(
+                        running = true,
+                        connected = false,
+                        authorized = false,
+                        syncing = false,
+                        transportLabel = "error",
+                        details = it.message ?: "Background core start failed",
+                        lastEventAt = System.currentTimeMillis(),
+                    )
+                )
+            }
+        }
+    }
+
+    private fun buildNotification(state: BackgroundStateSnapshot): Notification {
         val tint = contextColor(this)
+        val title = when {
+            !state.running -> "FlyGram background core stopped"
+            !state.authorized -> "FlyGram background core starting"
+            state.syncing -> "FlyGram background core syncing"
+            state.connected -> "FlyGram background core connected"
+            else -> "FlyGram background core reconnecting"
+        }
+        val text = state.details.ifBlank {
+            when {
+                state.connected -> "Native message sync is active"
+                state.running -> "Background keep-alive is active"
+                else -> "Background sync is idle"
+            }
+        }
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_notify_sync)
-            .setContentTitle("FlyGram keep alive")
-            .setContentText("Background sync and push relay are active")
+            .setContentTitle(title)
+            .setContentText(text)
             .setColor(tint)
             .setColorized(true)
             .setOngoing(true)
@@ -56,10 +182,22 @@ class KeepAliveService : Service() {
             "Keep alive",
             NotificationManager.IMPORTANCE_LOW,
         ).apply {
-            description = "Keeps FlyGram background service alive for sync/push reliability."
+            description = "Keeps FlyGram background core alive for sync and notification reliability."
             setShowBadge(false)
         }
         manager.createNotificationChannel(channel)
+    }
+
+    private fun TdRuntimeState.toBackgroundSnapshot(): BackgroundStateSnapshot {
+        return BackgroundStateSnapshot(
+            running = running,
+            connected = connectionState == TdConnectionState.CONNECTED,
+            authorized = authorizationState == TdAuthorizationState.READY,
+            syncing = syncing,
+            transportLabel = transportLabel,
+            details = details,
+            lastEventAt = lastUpdatedAt,
+        )
     }
 
     companion object {

@@ -51,6 +51,8 @@ import androidx.webkit.ProxyController
 import androidx.webkit.WebViewFeature
 import com.tgweb.core.data.AppRepositories
 import com.tgweb.core.data.DebugLogStore
+import com.tgweb.core.data.ProxyTransportUtils
+import com.tgweb.core.data.TelegramProxyProbeResult
 import com.tgweb.core.webbridge.BridgeCommand
 import com.tgweb.core.webbridge.BridgeCommandTypes
 import com.tgweb.core.webbridge.BridgeEvent
@@ -64,11 +66,6 @@ import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
-import java.net.HttpURLConnection
-import java.net.InetSocketAddress
-import java.net.Proxy
-import java.net.Socket
-import java.net.URL
 import android.net.http.SslError
 
 class MainActivity : ComponentActivity() {
@@ -851,45 +848,21 @@ class MainActivity : ComponentActivity() {
         dialog.show()
 
         lifecycleScope.launch {
-            val latency = measureProxyLatency(parsed)
-            ping.text = if (latency != null) "Ping: ${latency.toInt()} ms" else "Ping: timeout"
+            val probe = measureProxyLatency(parsed)
+            ping.text = formatProxyHealth(probe)
             DebugLogStore.log(
                 "PROXY",
-                "Bottom sheet proxy ping ${parsed.type.name}://${parsed.host}:${parsed.port} => ${ping.text}",
+                "Bottom sheet Telegram probe ${parsed.type.name}://${parsed.host}:${parsed.port} => ${ping.text} code=${probe.responseCode ?: -1} details=${probe.details}",
             )
         }
     }
 
-    private suspend fun measureProxyLatency(state: ProxyConfigSnapshot): Double? {
-        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            val startedAt = System.nanoTime()
-            runCatching {
-                when (state.type) {
-                    ProxyType.MTPROTO -> {
-                        Socket().use { socket ->
-                            socket.connect(InetSocketAddress(state.host, state.port), 6_000)
-                        }
-                    }
-                    ProxyType.SOCKS5,
-                    ProxyType.HTTP,
-                    -> {
-                        val proxy = Proxy(
-                            if (state.type == ProxyType.HTTP) Proxy.Type.HTTP else Proxy.Type.SOCKS,
-                            InetSocketAddress(state.host, state.port),
-                        )
-                        val connection = URL("https://web.telegram.org/").openConnection(proxy) as HttpURLConnection
-                        connection.requestMethod = "HEAD"
-                        connection.connectTimeout = 6_000
-                        connection.readTimeout = 6_000
-                        connection.connect()
-                        connection.responseCode
-                        connection.disconnect()
-                    }
-                    ProxyType.DIRECT -> return@withContext null
-                }
-                (System.nanoTime() - startedAt) / 1_000_000.0
-            }.getOrNull()
-        }
+    private suspend fun measureProxyLatency(state: ProxyConfigSnapshot): TelegramProxyProbeResult {
+        return ProxyTransportUtils.measureTelegramReachability(
+            proxyState = state,
+            connectTimeoutMs = 10_000,
+            readTimeoutMs = 10_000,
+        )
     }
 
     private fun openModSettings() {
@@ -1312,6 +1285,15 @@ class MainActivity : ComponentActivity() {
                 .put("username", snapshot.proxyState.username ?: "")
                 .put("secret", snapshot.proxyState.secret ?: "")
 
+            val backgroundJson = JSONObject()
+                .put("running", snapshot.backgroundState.running)
+                .put("connected", snapshot.backgroundState.connected)
+                .put("authorized", snapshot.backgroundState.authorized)
+                .put("syncing", snapshot.backgroundState.syncing)
+                .put("transportLabel", snapshot.backgroundState.transportLabel)
+                .put("details", snapshot.backgroundState.details)
+                .put("lastEventAt", snapshot.backgroundState.lastEventAt)
+
             val bootstrapJson = JSONObject()
                 .put("dialogs", dialogsJson)
                 .put("recentMessages", messagesJson)
@@ -1319,6 +1301,7 @@ class MainActivity : ComponentActivity() {
                 .put("cachedMedia", mediaJson)
                 .put("lastSyncAt", snapshot.lastSyncAt)
                 .put("proxyState", proxyJson)
+                .put("backgroundState", backgroundJson)
 
             val quoted = JSONObject.quote(bootstrapJson.toString())
             val script =
@@ -1871,17 +1854,8 @@ class MainActivity : ComponentActivity() {
               var shouldHandleNativeDownload = function(anchor) {
                 if (!anchor || !anchor.getAttribute) { return false; }
                 var href = String(anchor.getAttribute('href') || anchor.href || '').trim();
-                if (!href) { return false; }
-                if (href.indexOf('blob:') === 0) { return true; }
-                if (anchor.hasAttribute('download')) { return true; }
-                try {
-                  var parsed = new URL(href, location.href);
-                  var sameOrigin = parsed.origin === location.origin;
-                  var looksServiceWorkerDownload = /(^|\\/)d\\/[A-Za-z0-9_-]+$/.test(parsed.pathname || '');
-                  return sameOrigin && looksServiceWorkerDownload;
-                } catch (_) {
-                  return false;
-                }
+                if (!href || href.indexOf('blob:') !== 0) { return false; }
+                return !!getMappedNativeBlob(href);
               };
 
               var getMappedNativeBlob = function(url) {
@@ -1948,8 +1922,26 @@ class MainActivity : ComponentActivity() {
                 });
               };
 
+              var sendNativeDownloadTrace = function(stage, meta, extra) {
+                var payload = {
+                  stage: String(stage || ''),
+                  transferId: String((meta && meta.transferId) || ''),
+                  fileId: String((meta && meta.fileId) || ''),
+                  name: String((meta && meta.fileName) || ''),
+                  sizeBytes: String((meta && meta.sizeBytes) || 0),
+                  url: String((meta && meta.url) || '')
+                };
+                if (extra) {
+                  Object.keys(extra).forEach(function(key) {
+                    payload[key] = String(extra[key]);
+                  });
+                }
+                send('${BridgeCommandTypes.DOWNLOAD_FILE_PROGRESS}', payload);
+              };
+
               var streamBlobToNative = async function(blob, meta) {
                 var chunkSize = 16 * 1024;
+                sendNativeDownloadTrace('begin', meta, { chunkSize: chunkSize });
                 sendNativeDownloadBegin(meta);
                 for (var offset = 0; offset < blob.size; offset += chunkSize) {
                   var chunk = blob.slice(offset, Math.min(blob.size, offset + chunkSize));
@@ -1957,29 +1949,7 @@ class MainActivity : ComponentActivity() {
                   sendNativeDownloadChunk(meta, new Uint8Array(buffer));
                 }
                 sendNativeDownloadEnd(meta);
-              };
-
-              var streamResponseToNative = async function(response, meta) {
-                if (!response.body || !response.body.getReader) {
-                  var blob = await response.blob();
-                  meta.sizeBytes = blob.size || meta.sizeBytes || 0;
-                  if (!meta.mimeType || meta.mimeType === 'application/octet-stream') {
-                    meta.mimeType = blob.type || meta.mimeType;
-                  }
-                  await streamBlobToNative(blob, meta);
-                  return;
-                }
-
-                sendNativeDownloadBegin(meta);
-                var reader = response.body.getReader();
-                while (true) {
-                  var next = await reader.read();
-                  if (!next || next.done) { break; }
-                  if (next.value && next.value.length) {
-                    sendNativeDownloadChunk(meta, next.value);
-                  }
-                }
-                sendNativeDownloadEnd(meta);
+                sendNativeDownloadTrace('end', meta, { bytesSent: blob.size || 0 });
               };
 
               var triggerNativeDownload = async function(anchor) {
@@ -1988,41 +1958,35 @@ class MainActivity : ComponentActivity() {
                 if (wasNativeDownloadHandledRecently(anchor, href)) { return; }
 
                 var mappedBlob = getMappedNativeBlob(href);
-                var meta;
-                if (mappedBlob) {
-                  meta = buildNativeDownloadMeta(
-                    href,
-                    readAnchorDownloadName(anchor, null, href),
-                    mappedBlob.size || 0,
-                    mappedBlob.type || 'application/octet-stream'
-                  );
-                } else {
-                  var response = await fetch(href, { credentials: 'include' });
-                  if (!response.ok) {
-                    throw new Error('HTTP ' + response.status);
-                  }
-                  var sizeBytes = Number((response.headers && response.headers.get('Content-Length')) || 0) || 0;
-                  var mimeType = String((response.headers && response.headers.get('Content-Type')) || '').split(';')[0].trim();
-                  var fileName = readAnchorDownloadName(anchor, response, href);
-                  meta = buildNativeDownloadMeta(href, fileName, sizeBytes, mimeType);
-                  activeDownloads[meta.fileId] = true;
-                  updateDownloadsBadge();
-                  markNativeDownloadHandled(anchor, href);
-                  try {
-                    await streamResponseToNative(response, meta);
-                  } catch (error) {
-                    sendNativeDownloadCancel(meta, error && error.message ? error.message : 'download_stream_failed');
-                    throw error;
-                  }
+                if (!mappedBlob) {
+                  sendNativeDownloadTrace('skip_no_blob', {
+                    transferId: '',
+                    fileId: '',
+                    fileName: '',
+                    sizeBytes: 0,
+                    url: href
+                  }, {
+                    reason: 'blob_mapping_missing'
+                  });
                   return;
                 }
 
+                var downloadName = String((mappedBlob && mappedBlob.name) || readAnchorDownloadName(anchor, null, href) || '').trim();
+                var meta = buildNativeDownloadMeta(
+                  href,
+                  downloadName,
+                  mappedBlob.size || 0,
+                  mappedBlob.type || 'application/octet-stream'
+                );
                 activeDownloads[meta.fileId] = true;
                 updateDownloadsBadge();
                 markNativeDownloadHandled(anchor, href);
                 try {
                   await streamBlobToNative(mappedBlob, meta);
                 } catch (error) {
+                  sendNativeDownloadTrace('cancel', meta, {
+                    reason: error && error.message ? error.message : 'download_stream_failed'
+                  });
                   sendNativeDownloadCancel(meta, error && error.message ? error.message : 'download_stream_failed');
                   throw error;
                 }
@@ -2057,6 +2021,24 @@ class MainActivity : ComponentActivity() {
                     };
                   }
                   window.URL.__flygramPatched = true;
+                }
+
+                if (typeof window.open === 'function' && !window.__flygramOpenPatched) {
+                  var originalWindowOpen = window.open.bind(window);
+                  window.open = function(url, target, features) {
+                    var href = String(url || '').trim();
+                    if (href.indexOf('blob:') === 0 && getMappedNativeBlob(href)) {
+                      var syntheticAnchor = document.createElement('a');
+                      syntheticAnchor.setAttribute('href', href);
+                      syntheticAnchor.href = href;
+                      triggerNativeDownload(syntheticAnchor).catch(function(error) {
+                        console.error('FlyGram native window.open download failed', error);
+                      });
+                      return null;
+                    }
+                    return originalWindowOpen.apply(window, arguments);
+                  };
+                  window.__flygramOpenPatched = true;
                 }
 
                 if (window.HTMLAnchorElement && window.HTMLAnchorElement.prototype && !window.HTMLAnchorElement.prototype.__flygramPatched) {

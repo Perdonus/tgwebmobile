@@ -53,6 +53,16 @@ data class ProxyConfigSnapshot(
     val secret: String? = null,
 )
 
+data class BackgroundStateSnapshot(
+    val running: Boolean = false,
+    val connected: Boolean = false,
+    val authorized: Boolean = false,
+    val syncing: Boolean = false,
+    val transportLabel: String = "stub",
+    val details: String = "Background core is idle",
+    val lastEventAt: Long = 0L,
+)
+
 data class WebBootstrapSnapshot(
     val dialogs: List<WebDialogSnapshot> = emptyList(),
     val recentMessages: List<WebMessageSnapshot> = emptyList(),
@@ -60,6 +70,7 @@ data class WebBootstrapSnapshot(
     val cachedMedia: List<CachedMediaSnapshot> = emptyList(),
     val lastSyncAt: Long = 0L,
     val proxyState: ProxyConfigSnapshot = ProxyConfigSnapshot(),
+    val backgroundState: BackgroundStateSnapshot = BackgroundStateSnapshot(),
 )
 
 object BridgeCommandTypes {
@@ -95,6 +106,10 @@ object BridgeEventTypes {
     const val PUSH_PERMISSION_STATE = "PUSH_PERMISSION_STATE"
     const val KEEP_ALIVE_STATE = "KEEP_ALIVE_STATE"
     const val INTERFACE_SCALE_STATE = "INTERFACE_SCALE_STATE"
+    const val BACKGROUND_STATE = "BACKGROUND_STATE"
+    const val TDLIB_AUTH_STATE = "TDLIB_AUTH_STATE"
+    const val NATIVE_UNREAD_STATE = "NATIVE_UNREAD_STATE"
+    const val NATIVE_MESSAGE_HINT = "NATIVE_MESSAGE_HINT"
 }
 
 interface WebBridgeContract {

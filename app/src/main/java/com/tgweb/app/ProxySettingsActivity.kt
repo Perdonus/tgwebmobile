@@ -22,21 +22,16 @@ import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
 import com.tgweb.core.data.AppRepositories
 import com.tgweb.core.data.DebugLogStore
+import com.tgweb.core.data.ProxyTransportUtils
+import com.tgweb.core.data.TelegramProxyProbeFailure
+import com.tgweb.core.data.TelegramProxyProbeResult
 import com.tgweb.core.webbridge.ProxyConfigSnapshot
 import com.tgweb.core.webbridge.ProxyType
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import java.net.HttpURLConnection
-import java.net.InetSocketAddress
-import java.net.Proxy
-import java.net.Socket
-import java.net.URL
-import kotlin.math.roundToInt
 
 class ProxySettingsActivity : AppCompatActivity() {
     private lateinit var proxyEnabledSwitch: MaterialSwitch
@@ -361,17 +356,17 @@ class ProxySettingsActivity : AppCompatActivity() {
                 }
 
                 current.forEach { profile ->
-                    val latency = withTimeoutOrNull(PROXY_HEALTH_TIMEOUT_MS) {
+                    val probe = withTimeoutOrNull(PROXY_HEALTH_TIMEOUT_MS) {
                         measureProxyLatency(profile.config)
-                    }
-                    health[profile.id] = if (latency != null) {
-                        getString(R.string.proxy_health_ok, latency.roundToInt())
-                    } else {
-                        getString(R.string.proxy_health_timeout)
-                    }
+                    } ?: TelegramProxyProbeResult(
+                        failure = TelegramProxyProbeFailure.TIMEOUT,
+                        details = "Timed out after ${PROXY_HEALTH_TIMEOUT_MS}ms",
+                    )
+                    val healthText = formatProxyHealth(probe)
+                    health[profile.id] = healthText
                     DebugLogStore.log(
                         "PROXY",
-                        "Health check ${profile.title} ${profile.config.type.name}://${profile.config.host}:${profile.config.port} -> ${health[profile.id]}",
+                        "Telegram probe ${profile.title} ${profile.config.type.name}://${profile.config.host}:${profile.config.port} -> $healthText code=${probe.responseCode ?: -1} details=${probe.details}",
                     )
                     renderList()
                 }
@@ -380,50 +375,12 @@ class ProxySettingsActivity : AppCompatActivity() {
         }
     }
 
-    private suspend fun measureProxyLatency(state: ProxyConfigSnapshot): Double? = withContext(Dispatchers.IO) {
-        val startedAt = System.nanoTime()
-        runCatching {
-            when (state.type) {
-                ProxyType.MTPROTO -> {
-                    Socket().use { socket ->
-                        socket.connect(InetSocketAddress(state.host, state.port), CONNECT_TIMEOUT_MS)
-                    }
-                }
-                ProxyType.SOCKS5 -> {
-                    val proxy = Proxy(Proxy.Type.SOCKS, InetSocketAddress(state.host, state.port))
-                    URL(PING_URL).openConnection(proxy).let { connection ->
-                        val http = connection as HttpURLConnection
-                        http.instanceFollowRedirects = false
-                        http.connectTimeout = CONNECT_TIMEOUT_MS
-                        http.readTimeout = READ_TIMEOUT_MS
-                        http.requestMethod = "HEAD"
-                        http.connect()
-                        http.responseCode
-                        http.disconnect()
-                    }
-                }
-                ProxyType.HTTP -> {
-                    val proxy = Proxy(Proxy.Type.HTTP, InetSocketAddress(state.host, state.port))
-                    URL(PING_URL).openConnection(proxy).let { connection ->
-                        val http = connection as HttpURLConnection
-                        http.instanceFollowRedirects = false
-                        http.connectTimeout = CONNECT_TIMEOUT_MS
-                        http.readTimeout = READ_TIMEOUT_MS
-                        http.requestMethod = "HEAD"
-                        http.connect()
-                        http.responseCode
-                        http.disconnect()
-                    }
-                }
-                ProxyType.DIRECT -> return@withContext null
-            }
-            (System.nanoTime() - startedAt) / 1_000_000.0
-        }.onFailure {
-            DebugLogStore.log(
-                "PROXY",
-                "Latency check failed for ${state.type.name}://${state.host}:${state.port}: ${it::class.java.simpleName}: ${it.message}",
-            )
-        }.getOrNull()
+    private suspend fun measureProxyLatency(state: ProxyConfigSnapshot): TelegramProxyProbeResult {
+        return ProxyTransportUtils.measureTelegramReachability(
+            proxyState = state,
+            connectTimeoutMs = CONNECT_TIMEOUT_MS,
+            readTimeoutMs = READ_TIMEOUT_MS,
+        )
     }
 
     private fun createTextField(
@@ -480,6 +437,5 @@ class ProxySettingsActivity : AppCompatActivity() {
         private const val PROXY_HEALTH_TIMEOUT_MS = 60_000L
         private const val CONNECT_TIMEOUT_MS = 10_000
         private const val READ_TIMEOUT_MS = 10_000
-        private const val PING_URL = "https://web.telegram.org/"
     }
 }

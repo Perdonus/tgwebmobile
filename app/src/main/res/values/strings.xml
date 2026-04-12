@@ -52,10 +52,13 @@
     <string name="proxy_invalid_host_port">Проверь host/port (1..65535)</string>
     <string name="proxy_secret_required">Для MTProto обязателен secret</string>
     <string name="proxy_health_checking">Проверка прокси...</string>
-    <string name="proxy_health_ok">Прокси работает • %1$d мс</string>
-    <string name="proxy_health_timeout">Прокси не отвечает (таймаут 60 сек)</string>
+    <string name="proxy_health_ok">Telegram через прокси • %1$d мс</string>
+    <string name="proxy_health_timeout">Telegram через прокси не отвечает (таймаут 60 сек)</string>
     <string name="proxy_health_disabled">Прокси выключен</string>
-    <string name="proxy_profiles_hint">Нажми на прокси, чтобы сделать активным. Пинг обновляется каждые 10 секунд.</string>
+    <string name="proxy_health_auth_required">Прокси требует авторизацию</string>
+    <string name="proxy_health_unreachable">Telegram через прокси недоступен</string>
+    <string name="proxy_health_mtproto_unavailable">Проверка Telegram через MTProto появится после подключения TDLib</string>
+    <string name="proxy_profiles_hint">Нажми на прокси, чтобы сделать активным. Каждые 10 секунд проверяется доступность Telegram через выбранный прокси.</string>
     <string name="proxy_profiles_empty">Прокси пока не добавлены. Добавь новый или импортируй ссылку.</string>
     <string name="proxy_profile_name">Название профиля</string>
     <string name="proxy_add">Добавить прокси</string>
@@ -117,7 +120,7 @@
     <string name="proxy_copy_logs">Скопировать логи прокси</string>
     <string name="proxy_logs_copied">Логи прокси скопированы</string>
     <string name="proxy_overview_title">Подключение</string>
-    <string name="proxy_overview_body">Сохраняй несколько профилей и быстро переключайся между ними. Пинг обновляется автоматически.</string>
+    <string name="proxy_overview_body">Сохраняй несколько профилей и быстро переключайся между ними. FlyGram показывает доступность Telegram через каждый прокси, а не просто RTT до самого узла.</string>
     <string name="proxy_profiles_title">Профили</string>
     <string name="proxy_actions_title">Действия</string>
 

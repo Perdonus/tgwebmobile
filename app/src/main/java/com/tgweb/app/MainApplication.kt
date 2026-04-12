@@ -19,6 +19,7 @@ import com.tgweb.core.media.MediaRepositoryImpl
 import com.tgweb.core.notifications.AndroidNotificationService
 import com.tgweb.core.sync.SyncScheduler
 import com.tgweb.core.tdlib.StubTdLibGateway
+import com.tgweb.core.webbridge.BackgroundStateSnapshot
 import com.tgweb.core.webbridge.BridgeCommandTypes
 import com.tgweb.core.webbridge.CachedMediaSnapshot
 import com.tgweb.core.webbridge.ProxyConfigSnapshot
@@ -48,6 +49,7 @@ class MainApplication : Application() {
         val database = TelegramDatabaseFactory.create(this, passphrase = "qa-only-passphrase")
         DebugLogStore.log("APP", "Database created")
         val tdLibGateway = StubTdLibGateway()
+        DebugLogStore.log("TDLIB", "TDLib backend is not packaged in this build; background core stays in unavailable mode")
         val chatRepository = ChatRepositoryImpl(
             chatDao = database.chatDao(),
             messageDao = database.messageDao(),
@@ -142,6 +144,12 @@ class MainApplication : Application() {
                             }
                         }
                     }
+                    BridgeCommandTypes.DOWNLOAD_FILE_PROGRESS -> {
+                        DebugLogStore.log(
+                            "DOWNLOAD_BRIDGE",
+                            "JS trace stage=${command.payload["stage"].orEmpty()} transferId=${command.payload["transferId"].orEmpty()} fileId=${command.payload["fileId"].orEmpty()} name=${command.payload["name"].orEmpty()} size=${command.payload["sizeBytes"].orEmpty()} reason=${command.payload["reason"].orEmpty()} url=${command.payload["url"].orEmpty().take(240)}",
+                        )
+                    }
                     BridgeCommandTypes.DOWNLOAD_FILE_BEGIN -> {
                         val transferId = command.payload["transferId"].orEmpty()
                         val fileId = command.payload["fileId"].orEmpty()
@@ -206,12 +214,22 @@ class MainApplication : Application() {
         AppRepositories.chatRepository = chatRepository
         AppRepositories.mediaRepository = mediaRepository
         AppRepositories.notificationService = notificationService
+        AppRepositories.tdLibGateway = tdLibGateway
         AppRepositories.webBridge = webBridge
         AppRepositories.persistProxyState = { proxyState ->
             database.syncStateDao().upsert(
                 SyncStateEntity(
                     key = KEY_PROXY_STATE,
                     value = proxyToJson(proxyState),
+                    updatedAt = System.currentTimeMillis(),
+                )
+            )
+        }
+        AppRepositories.persistBackgroundState = { backgroundState ->
+            database.syncStateDao().upsert(
+                SyncStateEntity(
+                    key = KEY_BACKGROUND_STATE,
+                    value = backgroundStateToJson(backgroundState),
                     updatedAt = System.currentTimeMillis(),
                 )
             )
@@ -247,6 +265,9 @@ class MainApplication : Application() {
             val persistedProxy = database.syncStateDao().get(KEY_PROXY_STATE)?.value
                 ?.let(::proxyFromJson)
                 ?: ProxyConfigSnapshot()
+            val persistedBackground = database.syncStateDao().get(KEY_BACKGROUND_STATE)?.value
+                ?.let(::backgroundStateFromJson)
+                ?: AppRepositories.getBackgroundState()
             WebBootstrapSnapshot(
                 dialogs = dialogs,
                 recentMessages = recentMessages,
@@ -254,6 +275,7 @@ class MainApplication : Application() {
                 cachedMedia = cachedMedia,
                 lastSyncAt = lastSyncAt,
                 proxyState = persistedProxy,
+                backgroundState = persistedBackground,
             )
         }
 
@@ -273,6 +295,10 @@ class MainApplication : Application() {
                     .getInt(KeepAliveService.KEY_UI_SCALE_PERCENT, 100)
             )
             AppRepositories.postKeepAliveState(KeepAliveService.isEnabled(this@MainApplication))
+            val persistedBackground = database.syncStateDao().get(KEY_BACKGROUND_STATE)?.value
+                ?.let(::backgroundStateFromJson)
+                ?: BackgroundStateSnapshot()
+            AppRepositories.postBackgroundState(persistedBackground)
         }
 
         runCatching {
@@ -364,8 +390,34 @@ class MainApplication : Application() {
         )
     }
 
+    private fun backgroundStateToJson(state: BackgroundStateSnapshot): String {
+        return JSONObject()
+            .put("running", state.running)
+            .put("connected", state.connected)
+            .put("authorized", state.authorized)
+            .put("syncing", state.syncing)
+            .put("transportLabel", state.transportLabel)
+            .put("details", state.details)
+            .put("lastEventAt", state.lastEventAt)
+            .toString()
+    }
+
+    private fun backgroundStateFromJson(raw: String): BackgroundStateSnapshot {
+        val root = runCatching { JSONObject(raw) }.getOrDefault(JSONObject())
+        return BackgroundStateSnapshot(
+            running = root.optBoolean("running", false),
+            connected = root.optBoolean("connected", false),
+            authorized = root.optBoolean("authorized", false),
+            syncing = root.optBoolean("syncing", false),
+            transportLabel = root.optString("transportLabel", "stub"),
+            details = root.optString("details", "Background core is idle"),
+            lastEventAt = root.optLong("lastEventAt", 0L),
+        )
+    }
+
     companion object {
         private const val KEY_PROXY_STATE = "proxy_state"
+        private const val KEY_BACKGROUND_STATE = "background_state"
         private const val KEY_RUNTIME_DEFAULTS_MIGRATION_V3 = "runtime_defaults_migration_v3"
     }
 
