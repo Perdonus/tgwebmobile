@@ -75,13 +75,13 @@ jobs:
           set -euo pipefail
           ./gradlew --no-daemon --console=plain :app:assembleDebug :app:assembleRelease 2>&1 | tee .github-ci-logs/gradle-build.log
 
-      - name: Expose Gradle failure tail
+      - name: Expose Gradle failure summary
         if: failure()
         shell: bash
         run: |
           set -euo pipefail
           if [ -f .github-ci-logs/gradle-build.log ]; then
-            python3 -c "from pathlib import Path; lines=Path('.github-ci-logs/gradle-build.log').read_text(errors='replace').splitlines(); tail='\n'.join(lines[-220:])[-60000:]; tail=tail.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); print(f'::error title=Gradle failure tail::{tail}')"
+            python3 .github/scripts/extract_gradle_errors.py               .github-ci-logs/gradle-build.log               .github-ci-logs/gradle-error-summary.log
           fi
 
       - name: Upload debug APK
