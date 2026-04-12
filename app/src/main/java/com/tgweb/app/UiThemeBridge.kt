@@ -199,9 +199,9 @@ object UiThemeBridge {
             .setBottomRightCornerSize(if (bottomRounded) radius else smallRadius)
             .build()
         val content = MaterialShapeDrawable(shape).apply {
-            fillColor = ColorStateList.valueOf(fillColor)
+            this.fillColor = ColorStateList.valueOf(fillColor)
             strokeWidth = dp(context, 1).toFloat()
-            strokeColor = ColorStateList.valueOf(strokeColor)
+            this.strokeColor = ColorStateList.valueOf(strokeColor)
         }
         return RippleDrawable(ColorStateList.valueOf(rippleColor), content, null)
     }
