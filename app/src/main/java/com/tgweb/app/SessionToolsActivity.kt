@@ -19,7 +19,8 @@ import java.util.Locale
 class SessionToolsActivity : AppCompatActivity() {
     private lateinit var importSessionButton: Button
     private lateinit var importTdataButton: Button
-    private lateinit var exportSessionButton: Button
+    private lateinit var exportTelethonButton: Button
+    private lateinit var exportPyrogramButton: Button
     private lateinit var exportTdataButton: Button
     private lateinit var statusText: TextView
 
@@ -28,7 +29,7 @@ class SessionToolsActivity : AppCompatActivity() {
     private var isBusy: Boolean = false
 
     private val createDocumentLauncher =
-        registerForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
+        registerForActivityResult(ActivityResultContracts.CreateDocument("*/*")) { uri ->
             val format = pendingExportFormat
             pendingExportFormat = null
             if (uri == null || format == null) return@registerForActivityResult
@@ -70,7 +71,8 @@ class SessionToolsActivity : AppCompatActivity() {
     private fun bindViews() {
         importSessionButton = findViewById(R.id.importSessionButton)
         importTdataButton = findViewById(R.id.importTdataButton)
-        exportSessionButton = findViewById(R.id.exportSessionButton)
+        exportTelethonButton = findViewById(R.id.exportTelethonButton)
+        exportPyrogramButton = findViewById(R.id.exportPyrogramButton)
         exportTdataButton = findViewById(R.id.exportTdataButton)
         statusText = findViewById(R.id.sessionStatusText)
     }
@@ -82,8 +84,11 @@ class SessionToolsActivity : AppCompatActivity() {
         importTdataButton.setOnClickListener {
             startImport(SessionBackupManager.BackupFormat.TDATA)
         }
-        exportSessionButton.setOnClickListener {
-            startExport(SessionBackupManager.BackupFormat.SESSION)
+        exportTelethonButton.setOnClickListener {
+            startExport(SessionBackupManager.BackupFormat.TELETHON)
+        }
+        exportPyrogramButton.setOnClickListener {
+            startExport(SessionBackupManager.BackupFormat.PYROGRAM)
         }
         exportTdataButton.setOnClickListener {
             startExport(SessionBackupManager.BackupFormat.TDATA)
@@ -162,7 +167,13 @@ class SessionToolsActivity : AppCompatActivity() {
 
     private fun setBusy(busy: Boolean) {
         isBusy = busy
-        listOf(importSessionButton, importTdataButton, exportSessionButton, exportTdataButton).forEach { button ->
+        listOf(
+            importSessionButton,
+            importTdataButton,
+            exportTelethonButton,
+            exportPyrogramButton,
+            exportTdataButton,
+        ).forEach { button ->
             button.isEnabled = !busy
             button.alpha = if (busy) 0.55f else 1f
         }

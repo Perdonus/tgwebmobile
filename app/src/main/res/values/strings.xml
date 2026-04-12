@@ -21,7 +21,7 @@
     <string name="mod_proxy_title">Прокси</string>
     <string name="mod_proxy_summary">HTTP, SOCKS5, MTProto, импорт tg:// и t.me ссылок</string>
     <string name="mod_session_tools_title">Сессия и tdata</string>
-    <string name="mod_session_tools_summary">Импорт/экспорт профиля WebView в формате Session или tdata-bridge</string>
+    <string name="mod_session_tools_summary">Импорт .session (Telethon / Pyrogram) и TData, экспорт в реальные форматы Telegram</string>
     <string name="mod_customization_title">Кастомизация</string>
     <string name="mod_customization_summary">Жесты, MD3-стиль, цвета и боковое меню</string>
     <string name="mod_downloads_title">Загрузки</string>
@@ -78,14 +78,15 @@
     <string name="downloads_delete_failed">Не удалось удалить файл из кеша</string>
 
     <string name="session_tools_title">Сессия и tdata</string>
-    <string name="session_tools_description">Инструменты для переноса профиля FlyGram Web. Импорт применяется после перезапуска приложения.</string>
+    <string name="session_tools_description">Импортируй .session от Telethon / Pyrogram или TData от Telegram Desktop. Экспорт идёт в настоящие форматы, а не в копию WebView-профиля.</string>
     <string name="session_tools_import_title">Импорт</string>
     <string name="session_tools_export_title">Экспорт</string>
     <string name="session_tools_status_title">Статус</string>
-    <string name="session_tools_import_session">Импорт Session backup</string>
-    <string name="session_tools_import_tdata">Импорт tdata backup</string>
-    <string name="session_tools_export_session">Экспорт Session backup</string>
-    <string name="session_tools_export_tdata">Экспорт tdata backup</string>
+    <string name="session_tools_import_session">Импорт .session (Telethon / Pyrogram)</string>
+    <string name="session_tools_import_tdata">Импорт TData</string>
+    <string name="session_tools_export_telethon">Экспорт Telethon .session</string>
+    <string name="session_tools_export_pyrogram">Экспорт Pyrogram .session</string>
+    <string name="session_tools_export_tdata">Экспорт TData</string>
     <string name="session_tools_idle">Ожидание действия</string>
     <string name="session_tools_export_running">Экспорт %1$s...</string>
     <string name="session_tools_export_done">%1$s экспорт завершён (%2$s)</string>

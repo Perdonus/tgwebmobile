@@ -86,6 +86,8 @@ class MainActivity : ComponentActivity() {
     private var webUiReadyForProxy: Boolean = false
     private var pendingProxyForApply: ProxyConfigSnapshot? = null
     private var pendingOpenChannelUsername: String? = null
+    private var sessionImportAttemptedThisLaunch: Boolean = false
+    private var sessionImportInProgress: Boolean = false
 
     private val runtimePrefs by lazy {
         getSharedPreferences(KeepAliveService.PREFS, Context.MODE_PRIVATE)
@@ -346,6 +348,10 @@ class MainActivity : ComponentActivity() {
                 startedAtElapsedMs = SystemClock.elapsedRealtime()
                 attemptedOfflineFallback = false
                 webUiReadyForProxy = false
+                sessionImportInProgress = false
+                if (!SessionBackupManager.hasPendingImport(this@MainActivity)) {
+                    sessionImportAttemptedThisLaunch = false
+                }
                 AppRepositories.postNetworkState(isNetworkAvailable())
                 DebugLogStore.log("WEB", "Page started: ${url.orEmpty()}")
                 view?.settings?.cacheMode = if (isNetworkAvailable()) {
@@ -532,6 +538,8 @@ class MainActivity : ComponentActivity() {
                         BridgeCommandTypes.OPEN_SESSION_TOOLS -> openSessionTools(command.payload["mode"])
                         BridgeCommandTypes.OPEN_PROXY_PREVIEW -> showProxyBottomSheet(command.payload["url"])
                         BridgeCommandTypes.OPEN_AUTHOR_CHANNEL -> openAuthorChannel(command.payload["username"])
+                        BridgeCommandTypes.SYNC_SESSION_STATE -> handleSessionSyncState(command.payload["sessionJson"].orEmpty())
+                        BridgeCommandTypes.SESSION_IMPORT_RESULT -> handleSessionImportResult(command.payload)
                         BridgeCommandTypes.WEB_UI_READY -> onWebUiReady(command.payload)
                         BridgeCommandTypes.SET_PROXY -> handleProxyCommand(command)
                         BridgeCommandTypes.GET_PROXY_STATUS -> AppRepositories.postProxyState()
@@ -1014,8 +1022,7 @@ class MainActivity : ComponentActivity() {
         val path = uri.path.orEmpty()
         val isTelegramWebHost = host == "web.telegram.org" || host.endsWith(".web.telegram.org")
         val looksTelegramDocumentFlow = isTelegramWebHost && (
-            path.contains("/d/") ||
-                path.contains("/api") ||
+            path.contains("/api") ||
                 path.contains("/file") ||
                 path.contains("/download")
             )
@@ -1157,7 +1164,157 @@ class MainActivity : ComponentActivity() {
             pendingOpenChannelUsername?.let { queuedChannel ->
                 openAuthorChannel(queuedChannel, allowDeferUntilWebUiReady = false)
             }
+            maybeApplyPendingSessionImport()
         }
+    }
+
+    private fun handleSessionSyncState(rawJson: String) {
+        if (rawJson.isBlank()) return
+        SessionBackupManager.storeCurrentSessionSnapshot(this, rawJson)
+            .onFailure { error ->
+                DebugLogStore.logError("SESSION", "Failed to store current session snapshot", error)
+            }
+    }
+
+    private fun maybeApplyPendingSessionImport() {
+        if (sessionImportAttemptedThisLaunch || sessionImportInProgress) return
+        val pendingImport = SessionBackupManager.peekPendingImport(this) ?: return
+        sessionImportAttemptedThisLaunch = true
+        sessionImportInProgress = true
+        DebugLogStore.log(
+            "SESSION",
+            "Applying pending import format=${pendingImport.format.label} dc=${pendingImport.payload.dcId} userId=${pendingImport.payload.userId ?: 0L}",
+        )
+        webView.evaluateJavascript(buildPendingSessionImportScript(pendingImport.payload), null)
+    }
+
+    private fun buildPendingSessionImportScript(payload: TelegramSessionPayload): String {
+        val quotedPayload = JSONObject.quote(payload.toJson().toString())
+        return """
+            (function() {
+              if (window.__flygramSessionImportRunning) { return; }
+              window.__flygramSessionImportRunning = true;
+              var sendResult = function(status, extra) {
+                try {
+                  var resultPayload = extra || {};
+                  resultPayload.status = status;
+                  if (window.AndroidBridge && window.AndroidBridge.send) {
+                    window.AndroidBridge.send(JSON.stringify({
+                      type: '${BridgeCommandTypes.SESSION_IMPORT_RESULT}',
+                      payload: resultPayload
+                    }));
+                  }
+                } catch (e) {}
+              };
+
+              (async function() {
+                try {
+                  if (!window.AccountController || !window.rootScope || !window.rootScope.managers || !window.rootScope.managers.apiManager) {
+                    throw new Error('Web K managers are not ready');
+                  }
+
+                  var payload = JSON.parse($quotedPayload);
+                  var account = {
+                    dcId: Number(payload.dcId || 0),
+                    userId: payload.userId ? Number(payload.userId) : undefined,
+                    date: Math.floor(Date.now() / 1000),
+                    auth_key_fingerprint: String(payload.authKeyFingerprint || '')
+                  };
+                  var authKeys = payload.authKeys || {};
+                  var serverSalts = payload.serverSalts || {};
+                  Object.keys(authKeys).forEach(function(dcKey) {
+                    account['dc' + dcKey + '_auth_key'] = String(authKeys[dcKey] || '');
+                    account['dc' + dcKey + '_server_salt'] = String(serverSalts[dcKey] || 'AAAAAAAAAAAAAAAA');
+                  });
+
+                  await window.AccountController.update(1, account, true);
+
+                  var apiManager = window.rootScope.managers.apiManager;
+                  apiManager.setBaseDcId(Number(payload.dcId || 0));
+
+                  var resolvedUserId = payload.userId ? Number(payload.userId) : 0;
+                  if (resolvedUserId) {
+                    await apiManager.setUserAuth({
+                      id: resolvedUserId,
+                      dcID: Number(payload.dcId || 0),
+                      date: Math.floor(Date.now() / 1000)
+                    });
+                  }
+                  try {
+                    var users = await apiManager.invokeApi('users.getUsers', { id: [{ _: 'inputUserSelf' }] });
+                    if (users && users[0] && users[0].id) {
+                      resolvedUserId = Number(users[0].id);
+                      await apiManager.setUserAuth({
+                        id: resolvedUserId,
+                        dcID: Number(payload.dcId || 0),
+                        date: Math.floor(Date.now() / 1000)
+                      });
+                      await apiManager.setUser(users[0]);
+                    } else if (resolvedUserId) {
+                      await apiManager.setUserAuth({
+                        id: resolvedUserId,
+                        dcID: Number(payload.dcId || 0),
+                        date: Math.floor(Date.now() / 1000)
+                      });
+                    }
+                  } catch (fetchError) {
+                    if (resolvedUserId) {
+                      await apiManager.setUserAuth({
+                        id: resolvedUserId,
+                        dcID: Number(payload.dcId || 0),
+                        date: Math.floor(Date.now() / 1000)
+                      });
+                    } else {
+                      throw fetchError;
+                    }
+                  }
+
+                  sendResult('success', {
+                    format: String(payload.sourceFormat || ''),
+                    dcId: String(payload.dcId || ''),
+                    userId: resolvedUserId ? String(resolvedUserId) : ''
+                  });
+                  setTimeout(function() {
+                    location.reload();
+                  }, 140);
+                } catch (error) {
+                  window.__flygramSessionImportRunning = false;
+                  sendResult('error', {
+                    message: String((error && error.message) ? error.message : error)
+                  });
+                }
+              })();
+            })();
+        """.trimIndent()
+    }
+
+    private fun handleSessionImportResult(payload: Map<String, String>) {
+        val status = payload["status"].orEmpty()
+        if (status.equals("success", ignoreCase = true)) {
+            val pendingImport = SessionBackupManager.peekPendingImport(this)
+            val appliedUserId = payload["userId"]?.toLongOrNull()
+            if (pendingImport != null) {
+                SessionBackupManager.markPendingImportApplied(
+                    context = this,
+                    format = pendingImport.format,
+                    payload = pendingImport.payload,
+                    appliedUserId = appliedUserId,
+                )
+            }
+            DebugLogStore.log(
+                "SESSION",
+                "Pending import applied format=${pendingImport?.format?.label.orEmpty()} userId=${appliedUserId ?: 0L}",
+            )
+            Toast.makeText(this, "Сессия применена", Toast.LENGTH_SHORT).show()
+            sessionImportInProgress = false
+            return
+        }
+
+        val errorMessage = payload["message"].orEmpty().ifBlank { "Unknown session import error" }
+        DebugLogStore.log("SESSION", "Pending import failed: $errorMessage")
+        sessionImportAttemptedThisLaunch = false
+        Toast.makeText(this, "Не удалось применить сессию: $errorMessage", Toast.LENGTH_LONG).show()
+        sessionImportInProgress = false
     }
 
     private fun probeWebUiReady() {
@@ -1777,8 +1934,11 @@ class MainActivity : ComponentActivity() {
 
               var nativeDownloadCaptureInstalled = false;
               var nativeDownloadAnchorsPatched = false;
+              var nativeAppDownloadPatched = false;
               var nativeDownloadUrlMap = Object.create(null);
               var nativeDownloadRecentlyHandled = Object.create(null);
+              var nativeDownloadTrackedPromises = typeof WeakSet === 'function' ? new WeakSet() : null;
+              var nativeDownloadTrackedKeys = Object.create(null);
               var base64FromUint8 = function(uint8) {
                 var result = '';
                 var chunkSize = 0x8000;
@@ -1797,6 +1957,22 @@ class MainActivity : ComponentActivity() {
                   hash |= 0;
                 }
                 return Math.abs(hash).toString(16);
+              };
+
+              var guessExtensionFromMime = function(mimeType) {
+                var mime = String(mimeType || '').trim().toLowerCase();
+                if (!mime) { return ''; }
+                if (mime === 'application/zip') { return 'zip'; }
+                if (mime === 'application/pdf') { return 'pdf'; }
+                if (mime === 'audio/mpeg') { return 'mp3'; }
+                if (mime === 'audio/ogg') { return 'ogg'; }
+                if (mime === 'video/mp4') { return 'mp4'; }
+                if (mime === 'video/webm') { return 'webm'; }
+                if (mime === 'image/jpeg') { return 'jpg'; }
+                if (mime === 'image/png') { return 'png'; }
+                if (mime === 'image/webp') { return 'webp'; }
+                if (mime.indexOf('text/plain') === 0) { return 'txt'; }
+                return '';
               };
 
               var buildNativeDownloadMeta = function(url, fileName, sizeBytes, mimeType) {
@@ -1822,6 +1998,34 @@ class MainActivity : ComponentActivity() {
                   mimeType: String(mimeType || 'application/octet-stream'),
                   url: String(url || '')
                 };
+              };
+
+              var readDownloadNameFromOptions = function(options) {
+                var media = options && options.media ? options.media : {};
+                var fromOptions = String((options && options.fileName) || '').trim();
+                if (fromOptions) { return fromOptions; }
+                var fromMedia = String(media.file_name || media.fileName || '').trim();
+                if (fromMedia) { return fromMedia; }
+                var mimeExt = guessExtensionFromMime(media.mime_type);
+                if (media && media.id) {
+                  return 'telegram_' + String(media.id) + (mimeExt ? ('.' + mimeExt) : '');
+                }
+                return mimeExt ? ('download.' + mimeExt) : 'download.bin';
+              };
+
+              var buildDownloadKeyFromOptions = function(options, fileName) {
+                var media = options && options.media ? options.media : {};
+                var thumb = options && options.thumb ? options.thumb : {};
+                return [
+                  String(fileName || ''),
+                  String(media.id || ''),
+                  String(media.file_name || ''),
+                  String(media.mime_type || ''),
+                  String(media.size || 0),
+                  String(thumb.type || ''),
+                  String(thumb.w || 0),
+                  String(thumb.h || 0)
+                ].join('|');
               };
 
               var parseContentDispositionFileName = function(value) {
@@ -1992,6 +2196,92 @@ class MainActivity : ComponentActivity() {
                 }
               };
 
+              var installAppDownloadManagerBridge = function() {
+                if (nativeAppDownloadPatched) { return; }
+                var manager = window.appDownloadManager;
+                if (!manager || typeof manager.downloadToDisc !== 'function') { return; }
+
+                var originalDownloadToDisc = manager.downloadToDisc;
+                manager.downloadToDisc = function(options, justAttach) {
+                  if (!options || !options.media || !window.AndroidBridge || !window.AndroidBridge.send) {
+                    return originalDownloadToDisc.apply(this, arguments);
+                  }
+
+                  var promise = originalDownloadToDisc.call(this, options, true);
+                  if (justAttach) {
+                    return promise;
+                  }
+
+                  var fileName = readDownloadNameFromOptions(options);
+                  var media = options.media || {};
+                  var meta = buildNativeDownloadMeta(
+                    'appDownloadManager:' + buildDownloadKeyFromOptions(options, fileName),
+                    fileName,
+                    Number(media.size || 0) || 0,
+                    String(media.mime_type || 'application/octet-stream')
+                  );
+
+                  var alreadyTracked = false;
+                  if (nativeDownloadTrackedPromises && promise && typeof promise === 'object') {
+                    alreadyTracked = nativeDownloadTrackedPromises.has(promise);
+                    if (!alreadyTracked) {
+                      nativeDownloadTrackedPromises.add(promise);
+                    }
+                  } else if (nativeDownloadTrackedKeys[meta.fileId]) {
+                    alreadyTracked = true;
+                  } else {
+                    nativeDownloadTrackedKeys[meta.fileId] = Date.now();
+                  }
+                  if (alreadyTracked) {
+                    return promise;
+                  }
+
+                  activeDownloads[meta.fileId] = true;
+                  updateDownloadsBadge();
+                  sendNativeDownloadTrace('app_download_hook', meta, {
+                    mediaId: String(media.id || ''),
+                    justAttach: 'false'
+                  });
+
+                  if (promise && typeof promise.addNotifyListener === 'function') {
+                    promise.addNotifyListener(function(progress) {
+                      var done = Number(progress && progress.done || 0) || 0;
+                      var total = Number(progress && progress.total || meta.sizeBytes || 0) || 0;
+                      if (total > 0) {
+                        sendNativeDownloadTrace('progress', meta, {
+                          done: done,
+                          total: total
+                        });
+                      }
+                    });
+                  }
+
+                  Promise.resolve(promise).then(function(blob) {
+                    if (!blob || typeof blob.size !== 'number' || typeof blob.arrayBuffer !== 'function') {
+                      sendNativeDownloadTrace('skip_non_blob', meta, {
+                        kind: typeof blob
+                      });
+                      return;
+                    }
+                    return streamBlobToNative(blob, meta);
+                  }).then(function() {
+                    delete activeDownloads[meta.fileId];
+                    updateDownloadsBadge();
+                  }).catch(function(error) {
+                    sendNativeDownloadTrace('cancel', meta, {
+                      reason: error && error.message ? error.message : 'download_stream_failed'
+                    });
+                    sendNativeDownloadCancel(meta, error && error.message ? error.message : 'download_stream_failed');
+                    delete activeDownloads[meta.fileId];
+                    updateDownloadsBadge();
+                  });
+
+                  return promise;
+                };
+
+                nativeAppDownloadPatched = true;
+              };
+
               var patchNativeDownloadAnchors = function() {
                 if (nativeDownloadAnchorsPatched) { return; }
                 nativeDownloadAnchorsPatched = true;
@@ -2073,6 +2363,7 @@ class MainActivity : ComponentActivity() {
               var installNativeDownloadCapture = function() {
                 if (nativeDownloadCaptureInstalled) { return; }
                 nativeDownloadCaptureInstalled = true;
+                installAppDownloadManagerBridge();
                 patchNativeDownloadAnchors();
                 document.addEventListener('click', function(event) {
                   if (!event || !event.target || !event.target.closest) { return; }
@@ -2287,50 +2578,18 @@ class MainActivity : ComponentActivity() {
                   '}';
               };
 
-              var authOverlayProbeStartedAt = Date.now();
-              var authOverlayStableSince = 0;
-              var authOverlayChatSeenAt = 0;
-
               var ensureAuthImportButtons = function() {
                 var authRoot = document.getElementById('auth-pages') ||
                   document.querySelector('.auth-pages,.login-page,[class*=\"auth-pages\"],.page-signIn,.page-signQR,.page-signUp,.page-authCode,.page-password');
                 var chatVisible = !!document.querySelector(
                   '.left-sidebar .chatlist .chatlist-chat,.chat-main .bubbles,.chat-input .input-message-input'
                 );
-                var now = Date.now();
-                if (chatVisible) {
-                  authOverlayChatSeenAt = now;
-                }
                 var authVisible = !!(authRoot &&
                   authRoot.offsetParent !== null &&
                   authRoot.getBoundingClientRect &&
                   authRoot.getBoundingClientRect().height > 120);
-                var authInteractive = !!(authRoot && authRoot.querySelector &&
-                  authRoot.querySelector('input[type=\"tel\"],input[type=\"password\"],.qr-canvas,.auth-code-input'));
-                var authLogoNode = document.querySelector('.auth-image .sign-logo,.auth-image svg.sign-logo,.auth-image');
-                var authLogoVisible = !!(authLogoNode && authLogoNode.offsetParent !== null);
-
-                var hash = String(location.hash || '').toLowerCase();
-                var hashLooksAuth = hash.indexOf('auth') >= 0 || hash.indexOf('login') >= 0 || hash.indexOf('sign') >= 0;
-                var authCandidateVisible = !!authRoot && !chatVisible && authVisible && (authInteractive || authLogoVisible || hashLooksAuth);
-
-                if (authCandidateVisible) {
-                  if (!authOverlayStableSince) {
-                    authOverlayStableSince = now;
-                  }
-                } else {
-                  authOverlayStableSince = 0;
-                }
-
-                var stableAuthVisible = authOverlayStableSince > 0 && (now - authOverlayStableSince) >= 1300;
-                var allowByHashFallback = (now - authOverlayProbeStartedAt) >= 3200 &&
-                  hashLooksAuth &&
-                  (now - authOverlayChatSeenAt) >= 900;
-                var isAuthMode = !!authRoot && !chatVisible && stableAuthVisible && (authInteractive || allowByHashFallback);
-
+                var isAuthMode = !!authRoot && authVisible && !chatVisible;
                 var existing = document.querySelector('.tgweb-auth-import-actions');
-                var existingBranding = document.querySelector('.flygram-auth-branding');
-                if (existingBranding) { existingBranding.remove(); }
                 if (!isAuthMode || !authRoot) {
                   if (existing) { existing.remove(); }
                   return;
@@ -2354,6 +2613,9 @@ class MainActivity : ComponentActivity() {
 
                 var authImage = authRoot.querySelector('.auth-image');
                 if (authImage && flygramAuthImg) {
+                  authImage.style.display = 'flex';
+                  authImage.style.alignItems = 'center';
+                  authImage.style.justifyContent = 'center';
                   if (!authImage.querySelector('.flygram-auth-logo-wrap')) {
                     authImage.innerHTML = '<div class=\"flygram-auth-logo-wrap\">' + flygramAuthImg + '</div>';
                   } else {
@@ -2371,14 +2633,14 @@ class MainActivity : ComponentActivity() {
                 wrap.style.gap = '8px';
                 wrap.style.width = '100%';
                 wrap.style.maxWidth = '320px';
-                wrap.style.margin = '0';
-                wrap.style.position = 'fixed';
-                wrap.style.left = '50%';
-                wrap.style.bottom = 'max(18px, env(safe-area-inset-bottom))';
+                wrap.style.margin = '18px auto 0';
+                wrap.style.position = 'relative';
+                wrap.style.left = 'auto';
+                wrap.style.bottom = 'auto';
                 wrap.style.top = 'auto';
-                wrap.style.transform = 'translateX(-50%)';
-                wrap.style.zIndex = '999999';
-                wrap.style.padding = '0 8px';
+                wrap.style.transform = 'none';
+                wrap.style.zIndex = '1';
+                wrap.style.padding = '0';
                 wrap.style.pointerEvents = 'auto';
                 wrap.style.transition = 'none';
                 wrap.style.willChange = 'auto';
@@ -2406,13 +2668,64 @@ class MainActivity : ComponentActivity() {
                 };
 
                 wrap.innerHTML = '';
-                wrap.appendChild(makeButton('Импортировать Session', '${SessionToolsActivity.ACTION_IMPORT_SESSION}'));
-                wrap.appendChild(makeButton('Импортировать tdata', '${SessionToolsActivity.ACTION_IMPORT_TDATA}'));
+                wrap.appendChild(makeButton('Импорт .session', '${SessionToolsActivity.ACTION_IMPORT_SESSION}'));
+                wrap.appendChild(makeButton('Импорт TData', '${SessionToolsActivity.ACTION_IMPORT_TDATA}'));
 
-                if (!wrap.parentElement || wrap.parentElement !== document.body) {
-                  document.body.appendChild(wrap);
+                var host = authRoot.querySelector('.scrollable,.auth-page,.auth-pages') || authRoot;
+                var preferredAnchor = authImage && authImage.parentElement ? authImage.parentElement : null;
+                if (!wrap.parentElement || wrap.parentElement !== host) {
+                  if (preferredAnchor && preferredAnchor.parentElement === host && preferredAnchor.nextSibling) {
+                    host.insertBefore(wrap, preferredAnchor.nextSibling);
+                  } else {
+                    host.appendChild(wrap);
+                  }
                 }
               };
+
+              var syncSessionState = async function() {
+                try {
+                  if (!window.AccountController || !window.AccountController.get) { return; }
+                  var account = await window.AccountController.get(1);
+                  if (!account) { return; }
+
+                  var authKeys = {};
+                  var serverSalts = {};
+                  var hasAnyKey = false;
+                  for (var dc = 1; dc <= 5; dc++) {
+                    var authKey = account['dc' + dc + '_auth_key'];
+                    if (authKey) {
+                      authKeys[String(dc)] = String(authKey);
+                      hasAnyKey = true;
+                    }
+                    var serverSalt = account['dc' + dc + '_server_salt'];
+                    if (serverSalt) {
+                      serverSalts[String(dc)] = String(serverSalt);
+                    }
+                  }
+
+                  if (!hasAnyKey || !account.dcId) { return; }
+                  send('${BridgeCommandTypes.SYNC_SESSION_STATE}', {
+                    sessionJson: JSON.stringify({
+                      sourceFormat: 'webk',
+                      dcId: Number(account.dcId || 0),
+                      userId: account.userId ? String(account.userId) : '',
+                      authKeys: authKeys,
+                      serverSalts: serverSalts,
+                      authKeyFingerprint: String(account.auth_key_fingerprint || ''),
+                      updatedAt: Date.now()
+                    })
+                  });
+                } catch (e) {}
+              };
+              if (!window.__flygramSessionSyncBound && window.rootScope && window.rootScope.addEventListener) {
+                window.__flygramSessionSyncBound = true;
+                window.rootScope.addEventListener('user_auth', function() {
+                  setTimeout(syncSessionState, 180);
+                });
+                window.rootScope.addEventListener('account_logged_in', function() {
+                  setTimeout(syncSessionState, 180);
+                });
+              }
 
               var bindProxyLinkIntercept = function() {
                 if (window.__tgwebProxyLinkBound) { return; }
@@ -2849,6 +3162,16 @@ class MainActivity : ComponentActivity() {
               applySidebarMenuTweaks();
               installNativeDownloadCapture();
               ensureAuthImportButtons();
+              if (!window.__flygramAuthObserver && window.MutationObserver && document.body) {
+                window.__flygramAuthObserver = new MutationObserver(function() {
+                  ensureAuthImportButtons();
+                });
+                window.__flygramAuthObserver.observe(document.body, {
+                  childList: true,
+                  subtree: true
+                });
+              }
+              syncSessionState();
               bindProxyLinkIntercept();
               reportWebUiReadyIfPossible();
 
@@ -2861,6 +3184,7 @@ class MainActivity : ComponentActivity() {
               setInterval(ensureDownloadsButton, 1500);
               setInterval(applySidebarMenuTweaks, 1800);
               setInterval(ensureAuthImportButtons, 1200);
+              setInterval(syncSessionState, 8000);
               setInterval(reportWebUiReadyIfPossible, 900);
             })();
         """.trimIndent()
