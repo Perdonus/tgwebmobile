@@ -36,8 +36,8 @@ jobs:
             echo "google-services.json restored from GOOGLE_SERVICES_JSON_B64"
           elif [ -n "${{ secrets.GOOGLE_SERVICES_JSON }}" ]; then
             cat > app/google-services.json <<'EOF'
-${{ secrets.GOOGLE_SERVICES_JSON }}
-EOF
+            ${{ secrets.GOOGLE_SERVICES_JSON }}
+            EOF
             echo "google-services.json restored from GOOGLE_SERVICES_JSON"
           else
             echo "google-services.json secret not provided; build will continue without Firebase config"
