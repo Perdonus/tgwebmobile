@@ -26,7 +26,7 @@ private fun normalizeSessionHex(raw: String): String {
     return hex.uppercase(Locale.US)
 }
 
-internal data class TelegramSessionPayload(
+data class TelegramSessionPayload(
     val sourceFormat: String,
     val dcId: Int,
     val userId: Long?,
