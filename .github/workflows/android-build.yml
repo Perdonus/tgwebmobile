@@ -10,6 +10,8 @@ jobs:
   build-apk:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
     steps:
       - name: Checkout
@@ -59,6 +61,10 @@ jobs:
       - name: Make Gradle executable
         run: chmod +x ./gradlew
 
+      - name: Prepare CI log directory
+        shell: bash
+        run: mkdir -p .github-ci-logs
+
       - name: Assemble debug and release APK
         shell: bash
         env:
@@ -67,7 +73,27 @@ jobs:
           TGWEB_KEY_PASSWORD: ${{ secrets.TGWEB_KEY_PASSWORD }}
         run: |
           set -euo pipefail
-          ./gradlew --no-daemon --console=plain :app:assembleDebug :app:assembleRelease
+          ./gradlew --no-daemon --console=plain :app:assembleDebug :app:assembleRelease 2>&1 | tee .github-ci-logs/gradle-build.log
+
+      - name: Expose Gradle failure tail
+        if: failure()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY2'
+from pathlib import Path
+log_path = Path('.github-ci-logs/gradle-build.log')
+if not log_path.exists():
+    raise SystemExit(0)
+content = log_path.read_text(errors='replace')
+lines = content.splitlines()
+tail = '
+'.join(lines[-220:])
+message = tail[-60000:]
+message = message.replace('%', '%25').replace('', '%0D').replace('
+', '%0A')
+print(f"::error title=Gradle failure tail::{message}")
+PY2
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
@@ -83,12 +109,13 @@ jobs:
           path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error
 
-      - name: Upload build reports on failure
-        if: failure()
+      - name: Upload CI logs and build reports
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: flygram-build-reports
+          name: flygram-ci-logs
           path: |
+            .github-ci-logs
             app/build/reports
             **/build/reports
             **/build/outputs/logs
