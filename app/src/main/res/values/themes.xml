@@ -18,7 +18,13 @@
         <item name="toolbarStyle">@style/Widget.TGWeb.Settings.Toolbar</item>
         <item name="materialButtonStyle">@style/Widget.TGWeb.Settings.Button</item>
         <item name="materialCardViewStyle">@style/Widget.TGWeb.Settings.Card</item>
+        <item name="materialAlertDialogTheme">@style/ThemeOverlay.TGWeb.Settings.Dialog</item>
         <item name="preferenceTheme">@style/PreferenceThemeOverlay.TGWeb.Settings</item>
+        <item name="shapeAppearanceSmallComponent">@style/ShapeAppearanceOverlay.TGWeb.Settings.Input</item>
+        <item name="shapeAppearanceMediumComponent">@style/ShapeAppearanceOverlay.TGWeb.Settings.Card</item>
+        <item name="shapeAppearanceLargeComponent">@style/ShapeAppearanceOverlay.TGWeb.Settings.Card</item>
+        <item name="textInputStyle">@style/Widget.TGWeb.Settings.TextInputLayout</item>
+        <item name="editTextStyle">@style/Widget.TGWeb.Settings.TextInputEditText</item>
         <item name="android:listDivider">@android:color/transparent</item>
         <item name="android:windowBackground">?android:colorBackground</item>
         <item name="android:navigationBarColor">?attr/colorSurface</item>

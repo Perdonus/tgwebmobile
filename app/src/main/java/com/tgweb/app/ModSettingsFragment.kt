@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Color
 import android.graphics.Typeface
 import android.os.Build
 import android.os.Bundle
@@ -232,7 +233,7 @@ class ModSettingsFragment : PreferenceFragmentCompat() {
     private fun applyExpressiveSettingsStyle() {
         val recycler = listView ?: return
         recycler.clipToPadding = false
-        recycler.setPadding(dp(14), dp(12), dp(14), dp(28))
+        recycler.setPadding(dp(12), dp(10), dp(12), dp(28))
         recycler.itemAnimator = null
 
         recycler.addOnScrollListener(
@@ -269,17 +270,17 @@ class ModSettingsFragment : PreferenceFragmentCompat() {
         val params = view.layoutParams as? RecyclerView.LayoutParams ?: return
 
         if (preference is PreferenceCategory) {
-            params.topMargin = if (position == 0) dp(4) else dp(18)
-            params.bottomMargin = dp(6)
-            params.marginStart = dp(6)
-            params.marginEnd = dp(6)
+            params.topMargin = if (position == 0) dp(2) else dp(18)
+            params.bottomMargin = dp(4)
+            params.marginStart = dp(8)
+            params.marginEnd = dp(8)
             view.layoutParams = params
             view.background = null
-            view.setPadding(dp(6), dp(6), dp(6), dp(2))
+            view.setPadding(dp(6), dp(4), dp(6), dp(2))
             view.findViewById<TextView>(android.R.id.title)?.apply {
                 setTextColor(palette.onSurfaceVariant)
                 setTypeface(typeface, Typeface.BOLD)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
             }
             view.findViewById<TextView>(android.R.id.summary)?.visibility = View.GONE
             return
@@ -290,23 +291,25 @@ class ModSettingsFragment : PreferenceFragmentCompat() {
         val topRounded = previous == null || previous is PreferenceCategory
         val bottomRounded = next == null || next is PreferenceCategory
         val highlighted = preference.key == KEY_AUTHOR_CHANNEL
-        params.topMargin = 0
-        params.bottomMargin = if (bottomRounded) dp(12) else 0
-        params.marginStart = 0
-        params.marginEnd = 0
+        params.topMargin = if (topRounded) dp(4) else dp(1)
+        params.bottomMargin = if (bottomRounded) dp(14) else 0
+        params.marginStart = dp(8)
+        params.marginEnd = dp(8)
         view.layoutParams = params
+        view.minimumHeight = dp(68)
         view.background = UiThemeBridge.createSelectableGroupBackground(
             context = requireContext(),
             fillColor = if (highlighted) palette.primaryContainer else palette.surfaceContainerHigh,
-            strokeColor = palette.outlineVariant,
+            strokeColor = Color.TRANSPARENT,
             rippleColor = androidx.core.graphics.ColorUtils.setAlphaComponent(
                 palette.primary,
                 if (palette.isLight) 28 else 54,
             ),
             topRounded = topRounded,
             bottomRounded = bottomRounded,
+            strokeWidthDp = 0,
         )
-        view.setPadding(dp(20), dp(8), dp(20), dp(8))
+        view.setPadding(dp(20), dp(12), dp(20), dp(12))
         view.findViewById<TextView>(android.R.id.title)?.setTextColor(
             if (highlighted) palette.onPrimaryContainer else palette.onSurface,
         )

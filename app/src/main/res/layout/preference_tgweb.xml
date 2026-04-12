@@ -1,64 +1,54 @@
 <?xml version="1.0" encoding="utf-8"?>
-<com.google.android.material.card.MaterialCardView xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
-    style="@style/Widget.TGWeb.Settings.Card"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:layout_marginTop="10dp"
-    android:layout_marginBottom="2dp">
+    android:gravity="center_vertical"
+    android:minHeight="72dp"
+    android:orientation="horizontal"
+    android:paddingStart="20dp"
+    android:paddingTop="16dp"
+    android:paddingEnd="16dp"
+    android:paddingBottom="16dp">
+
+    <FrameLayout
+        android:id="@+id/icon_frame"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:visibility="gone">
+
+        <ImageView
+            android:id="@android:id/icon"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content" />
+    </FrameLayout>
 
     <LinearLayout
-        android:layout_width="match_parent"
+        android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:foreground="?attr/selectableItemBackground"
-        android:gravity="center_vertical"
-        android:minHeight="84dp"
-        android:orientation="horizontal"
-        android:paddingStart="20dp"
-        android:paddingTop="18dp"
-        android:paddingEnd="16dp"
-        android:paddingBottom="18dp">
+        android:layout_weight="1"
+        android:orientation="vertical">
 
-        <FrameLayout
-            android:id="@+id/icon_frame"
-            android:layout_width="0dp"
-            android:layout_height="0dp"
-            android:visibility="gone">
-
-            <ImageView
-                android:id="@android:id/icon"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content" />
-        </FrameLayout>
-
-        <LinearLayout
-            android:layout_width="0dp"
+        <TextView
+            android:id="@android:id/title"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:orientation="vertical">
+            android:textAppearance="@style/TextAppearance.TGWeb.Settings.PreferenceTitle" />
 
-            <TextView
-                android:id="@android:id/title"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:textAppearance="@style/TextAppearance.TGWeb.Settings.PreferenceTitle" />
-
-            <TextView
-                android:id="@android:id/summary"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
-                android:maxLines="3"
-                android:textAppearance="@style/TextAppearance.TGWeb.Settings.PreferenceSummary"
-                android:visibility="gone" />
-        </LinearLayout>
-
-        <LinearLayout
-            android:id="@android:id/widget_frame"
-            android:layout_width="wrap_content"
+        <TextView
+            android:id="@android:id/summary"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginStart="14dp"
-            android:gravity="center_vertical"
-            android:orientation="horizontal" />
+            android:layout_marginTop="4dp"
+            android:maxLines="3"
+            android:textAppearance="@style/TextAppearance.TGWeb.Settings.PreferenceSummary"
+            android:visibility="gone" />
     </LinearLayout>
-</com.google.android.material.card.MaterialCardView>
+
+    <LinearLayout
+        android:id="@android:id/widget_frame"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="14dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal" />
+</LinearLayout>

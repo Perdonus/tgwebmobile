@@ -265,6 +265,7 @@ class ProxySettingsActivity : AppCompatActivity() {
         val typeField = TextInputLayout(this).apply {
             hint = getString(R.string.proxy_type)
             isHintEnabled = true
+            boxBackgroundMode = TextInputLayout.BOX_BACKGROUND_FILLED
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -390,6 +391,7 @@ class ProxySettingsActivity : AppCompatActivity() {
     ): TextInputLayout {
         return TextInputLayout(this).apply {
             this.hint = hint
+            boxBackgroundMode = TextInputLayout.BOX_BACKGROUND_FILLED
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,

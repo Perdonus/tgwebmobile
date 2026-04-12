@@ -71,6 +71,15 @@ object UiThemeBridge {
         return ColorUtils.blendARGB(base, accent, blendAmount)
     }
 
+    fun readDynamicAccentColor(activity: Activity): Int {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            return Color.parseColor("#3390EC")
+        }
+        return runCatching {
+            ContextCompat.getColor(activity, android.R.color.system_accent1_500)
+        }.getOrDefault(Color.parseColor("#3390EC"))
+    }
+
     fun resolveSettingsSurfaceColor(activity: Activity): Int {
         val useDynamic = activity.getSharedPreferences(KeepAliveService.PREFS, Activity.MODE_PRIVATE)
             .getBoolean(KeepAliveService.KEY_DYNAMIC_COLOR, false)
@@ -150,8 +159,8 @@ object UiThemeBridge {
         listView.setBackgroundColor(Color.TRANSPARENT)
         listView.cacheColorHint = Color.TRANSPARENT
         listView.divider = ColorDrawable(Color.TRANSPARENT)
-        listView.dividerHeight = dp(listView.context, 8)
-        listView.setPadding(0, dp(listView.context, 8), 0, dp(listView.context, 8))
+        listView.dividerHeight = dp(listView.context, 10)
+        listView.setPadding(0, dp(listView.context, 4), 0, dp(listView.context, 6))
         listView.clipToPadding = false
     }
 
@@ -168,9 +177,9 @@ object UiThemeBridge {
         subtitleView.setTextColor(if (activated) palette.onPrimaryContainer else palette.onSurfaceVariant)
         titleView.maxLines = 2
         subtitleView.maxLines = 3
-        val contentPaddingHorizontal = dp(context, 20)
-        val contentPaddingVertical = dp(context, 16)
-        rowView.minimumHeight = dp(context, 84)
+        val contentPaddingHorizontal = dp(context, 18)
+        val contentPaddingVertical = dp(context, 14)
+        rowView.minimumHeight = dp(context, 76)
         rowView.setPadding(contentPaddingHorizontal, contentPaddingVertical, contentPaddingHorizontal, contentPaddingVertical)
         rowView.background = createSelectableGroupBackground(
             context = context,
@@ -189,9 +198,10 @@ object UiThemeBridge {
         rippleColor: Int,
         topRounded: Boolean,
         bottomRounded: Boolean,
+        strokeWidthDp: Int = 1,
     ): RippleDrawable {
         val radius = dp(context, 24).toFloat()
-        val smallRadius = dp(context, 6).toFloat()
+        val smallRadius = 0f
         val shape = ShapeAppearanceModel.builder()
             .setTopLeftCornerSize(if (topRounded) radius else smallRadius)
             .setTopRightCornerSize(if (topRounded) radius else smallRadius)
@@ -200,8 +210,10 @@ object UiThemeBridge {
             .build()
         val content = MaterialShapeDrawable(shape).apply {
             this.fillColor = ColorStateList.valueOf(fillColor)
-            strokeWidth = dp(context, 1).toFloat()
-            this.strokeColor = ColorStateList.valueOf(strokeColor)
+            if (Color.alpha(strokeColor) > 0 && strokeWidthDp > 0) {
+                strokeWidth = dp(context, strokeWidthDp).toFloat()
+                this.strokeColor = ColorStateList.valueOf(strokeColor)
+            }
         }
         return RippleDrawable(ColorStateList.valueOf(rippleColor), content, null)
     }

@@ -1487,9 +1487,9 @@ class MainActivity : ComponentActivity() {
         val replyAutoFocus = runtimePrefs.getBoolean(KeepAliveService.KEY_REPLY_AUTO_FOCUS, true)
         val authLogoQuoted = JSONObject.quote(authLogoDataUri)
         val md3Accent = if (dynamicColor) {
-            colorToHex(UiThemeBridge.readDynamicSurfaceColor(this))
+            colorToHex(UiThemeBridge.readDynamicAccentColor(this))
         } else {
-            runtimePrefs.getString(KeepAliveService.KEY_STATUS_BAR_COLOR, "#3390EC").orEmpty()
+            "#3390EC"
         }
         val script = """
             (function() {
@@ -1652,6 +1652,17 @@ class MainActivity : ComponentActivity() {
                   if (parsed) { return parsed; }
                 }
                 return '';
+              };
+
+              var readPrimaryColor = function(baseHex) {
+                var docStyles = getComputedStyle(document.documentElement);
+                var bodyStyles = getComputedStyle(document.body || document.documentElement);
+                var direct =
+                  colorFromCss(docStyles.getPropertyValue('--primary-color'), '', baseHex) ||
+                  colorFromCss(bodyStyles.getPropertyValue('--primary-color'), '', baseHex) ||
+                  colorFromCss(docStyles.getPropertyValue('--tg-theme-button-color'), '', baseHex) ||
+                  colorFromCss(bodyStyles.getPropertyValue('--tg-theme-button-color'), '', baseHex);
+                return direct || '#3390ec';
               };
 
               var readElementSurfaceColor = function(el, fallbackHex, baseHex) {
@@ -1821,34 +1832,44 @@ class MainActivity : ComponentActivity() {
               };
 
               var applyCustomizations = function() {
-                if (!custom.md3Effects) { return; }
-                var bodyStyles = getComputedStyle(document.body || document.documentElement);
-                var rootBg = colorFromCss(bodyStyles.backgroundColor || '#0e1621');
+                var style = document.getElementById('tgweb-md3-patch');
+                if (!custom.md3Effects) {
+                  if (style) {
+                    style.textContent = '';
+                  }
+                  return;
+                }
+                var rootBg = resolveSystemSurfaceColor();
                 var isLightTheme = luminance(rootBg) > 0.62;
-                var textColor = isLightTheme ? '#102030' : '#e9f3ff';
-                var mutedTextColor = blendHex(textColor, rootBg, isLightTheme ? 0.45 : 0.35);
-                var containerBg = blendHex(rootBg, textColor, isLightTheme ? 0.035 : 0.07);
-                var dividerColor = blendHex(rootBg, textColor, isLightTheme ? 0.16 : 0.24);
-                var accentColor = custom.md3Accent && custom.md3Accent.length === 7 ? custom.md3Accent : '#3390ec';
+                var textColor = isLightTheme ? '#162235' : '#edf3fc';
+                var mutedTextColor = blendHex(textColor, rootBg, isLightTheme ? 0.50 : 0.38);
+                var surfaceColor = isLightTheme
+                  ? blendHex(rootBg, '#ffffff', 0.72)
+                  : blendHex(rootBg, '#ffffff', 0.06);
+                var containerBg = isLightTheme
+                  ? blendHex(surfaceColor, '#ffffff', 0.18)
+                  : blendHex(surfaceColor, '#ffffff', 0.04);
+                var dividerColor = blendHex(textColor, rootBg, isLightTheme ? 0.82 : 0.78);
+                var accentColor = custom.dynamicColor
+                  ? (custom.md3Accent && custom.md3Accent.length === 7 ? custom.md3Accent : '#3390ec')
+                  : readPrimaryColor(rootBg);
                 var isDividers = custom.containerStyle === 'dividers';
                 var hideBasePlates = !!custom.md3HideBasePlates;
                 var rowCss = isDividers
-                  ? 'margin:0 !important;border-radius:0 !important;border:0 !important;min-height:48px !important;'
-                  : 'margin:3px 8px !important;border-radius:14px !important;border:1px solid var(--flygram-divider) !important;';
+                  ? 'margin:0 !important;border-radius:0 !important;border:0 !important;min-height:50px !important;'
+                  : 'margin:3px 8px !important;border-radius:18px !important;border:1px solid var(--flygram-divider) !important;';
                 var groupsCss = !hideBasePlates
                   ? ''
                   : (isDividers
-                  ? 'margin:8px 10px !important;border-radius:16px !important;border:1px solid var(--flygram-divider) !important;overflow:hidden !important;background:var(--flygram-container) !important;'
+                  ? 'margin:8px 10px !important;border-radius:20px !important;border:1px solid var(--flygram-divider) !important;overflow:hidden !important;background:var(--flygram-surface) !important;'
                   : 'margin:0 !important;border:0 !important;border-radius:0 !important;overflow:visible !important;background:transparent !important;');
                 var dividerRowsCss = isDividers
                   ? '.settings-container .row + .row,.btn-menu .btn-menu-item + .btn-menu-item,.menu-item + .menu-item,.profile-buttons .row + .row{border-top:1px solid var(--flygram-divider) !important;}'
                   : '';
                 var primaryButtonBg = custom.dynamicColor
-                  ? 'linear-gradient(135deg, var(--flygram-accent), ' + blendHex(accentColor, '#ffffff', 0.20) + ')'
-                  : 'var(--primary-color, #3390ec)';
-                var primaryButtonText = custom.dynamicColor
-                  ? '#fff'
-                  : 'var(--primary-text-color, #fff)';
+                  ? 'linear-gradient(135deg, var(--flygram-accent), ' + blendHex(accentColor, '#ffffff', 0.18) + ')'
+                  : 'var(--flygram-accent)';
+                var primaryButtonText = '#fff';
                 var groupsCssBlock = groupsCss
                   ? '.settings-container .profile-buttons,.settings-container .list,.settings-container .sections,' +
                     '.settings-container .content,.btn-menu .btn-menu-items,.btn-menu,.popup .btn-menu-items,' +
@@ -1858,9 +1879,8 @@ class MainActivity : ComponentActivity() {
                   : '';
                 var rowBgCss = hideBasePlates
                   ? 'background:var(--flygram-container) !important;'
-                  : '';
+                  : 'background:var(--flygram-surface) !important;';
 
-                var style = document.getElementById('tgweb-md3-patch');
                 if (!style) {
                   style = document.createElement('style');
                   style.id = 'tgweb-md3-patch';
@@ -1871,13 +1891,10 @@ class MainActivity : ComponentActivity() {
                     '--flygram-bg:' + rootBg + ';' +
                     '--flygram-text:' + textColor + ';' +
                     '--flygram-muted:' + mutedTextColor + ';' +
+                    '--flygram-surface:' + surfaceColor + ';' +
                     '--flygram-container:' + containerBg + ';' +
                     '--flygram-divider:' + dividerColor + ';' +
                     '--flygram-accent:' + accentColor + ';' +
-                  '}' +
-                  'body,#root,.app-wrapper,.left-sidebar,.chat,.chat-background{' +
-                    'background:var(--flygram-bg) !important;' +
-                    'color:var(--flygram-text) !important;' +
                   '}' +
                   groupsCssBlock +
                   '.settings-container .row,.settings-content .row,.profile-buttons .row,' +
@@ -1889,33 +1906,46 @@ class MainActivity : ComponentActivity() {
                   '}' +
                   '.btn-menu,.popup{' +
                     'max-width:min(88vw, 340px) !important;' +
-                    'width:fit-content !important;' +
+                    'width:min(88vw, 340px) !important;' +
                     'margin-inline:12px !important;' +
+                    'background:var(--flygram-surface) !important;' +
+                    'border:1px solid var(--flygram-divider) !important;' +
+                    'border-radius:22px !important;' +
+                    'box-shadow:0 20px 40px rgba(0,0,0,.18) !important;' +
+                    'overflow:hidden !important;' +
                   '}' +
                   '.btn-menu .btn-menu-item,.popup .btn-menu-item,.menu-item{' +
-                    'min-height:40px !important;' +
+                    'min-height:44px !important;' +
                     'padding-top:8px !important;' +
                     'padding-bottom:8px !important;' +
                   '}' +
                   '.btn-menu .btn-menu-items,.popup .btn-menu-items{' +
-                    'padding-top:4px !important;' +
-                    'padding-bottom:4px !important;' +
+                    'padding:6px !important;' +
                   '}' +
                   '.settings-container .row-title,.settings-container .row-subtitle,' +
-                  '.btn-menu-item-text,.btn-menu-item-auxiliary-text,.subtitle,.description{' +
+                  '.profile-content .row-title,.profile-content .subtitle,' +
+                  '.btn-menu-item-text,.btn-menu-item-auxiliary-text{' +
                     'color:var(--flygram-text) !important;' +
                   '}' +
-                  '.settings-container .row-subtitle,.btn-menu-item-auxiliary-text,.subtitle{' +
+                  '.settings-container .row-subtitle,.profile-content .subtitle,.btn-menu-item-auxiliary-text{' +
                     'color:var(--flygram-muted) !important;' +
                   '}' +
+                  '.btn-menu-item .tgico,.profile-content .row-icon,.settings-container .row-icon{' +
+                    'color:var(--flygram-accent) !important;' +
+                  '}' +
                   '.btn-primary,.btn-primary-transparent,.tgweb-auth-import-actions button{' +
-                    'border-radius:12px !important;' +
+                    'border-radius:14px !important;' +
                     'border:0 !important;' +
                     'background:' + primaryButtonBg + ' !important;' +
                     'color:' + primaryButtonText + ' !important;' +
                   '}' +
+                  '.tgweb-mod-settings-row,.tgweb-author-channel-row,.tgweb-downloads-row{' +
+                    'background:var(--flygram-surface) !important;' +
+                    'border:1px solid var(--flygram-divider) !important;' +
+                    'border-radius:18px !important;' +
+                  '}' +
                   dividerRowsCss +
-                  '.popup,.chat-info,.media-viewer{' +
+                  '.chat-info,.media-viewer{' +
                     'border-radius:18px !important;' +
                   '}';
               };
@@ -2381,26 +2411,43 @@ class MainActivity : ComponentActivity() {
               };
 
               var removeMoreMenuEntry = function() {
+                var style = document.getElementById('flygram-hide-more-style');
+                if (!style) {
+                  style = document.createElement('style');
+                  style.id = 'flygram-hide-more-style';
+                  style.textContent = '.tgweb-hidden-more{display:none !important;visibility:hidden !important;}';
+                  document.head.appendChild(style);
+                }
                 if (!custom.menuHideMore) { return; }
-                document.querySelectorAll('.btn-menu-item,.menu-item,.row,button,div').forEach(function(node) {
+                var markHidden = function(node) {
+                  if (!node) { return; }
+                  node.classList && node.classList.add('tgweb-hidden-more');
+                  hideNode(node);
+                  var previous = node.previousElementSibling;
+                  if (previous && previous.childElementCount === 0 && !String(previous.textContent || '').trim()) {
+                    previous.classList && previous.classList.add('tgweb-hidden-more');
+                    hideNode(previous);
+                  }
+                };
+                var candidates = document.querySelectorAll('.btn-menu-item,.menu-item,.row,[role=\"menuitem\"],button');
+                candidates.forEach(function(node) {
                   if (!node || !node.closest) { return; }
-                  var menuScope = node.closest('.btn-menu,.left-sidebar,.sidebar-left,.btn-menu-items,.sidebar-tools-menu,.menu');
+                  var menuScope = node.closest('.btn-menu,.btn-menu-items,.sidebar-tools-menu,.menu,.left-sidebar .btn-menu-items,.profile-buttons');
                   if (!menuScope) { return; }
-
                   var labelNode = node.querySelector ? node.querySelector('.btn-menu-item-text,.row-title,.title,.subtitle') : null;
                   var rawText = String((labelNode ? labelNode.textContent : node.textContent) || '');
                   var text = rawText.replace(/\s+/g, ' ').trim().toLowerCase();
                   var iconNode = node.querySelector ? node.querySelector('.tgico-more,[class*=\"tgico-more\"],[data-icon=\"more\"]') : null;
+                  var ariaLabel = String(
+                    (node.getAttribute && (node.getAttribute('aria-label') || node.getAttribute('title') || '')) || ''
+                  ).trim().toLowerCase();
                   var dataTab = String(
-                    (node.getAttribute && (node.getAttribute('data-tab') || node.getAttribute('data-peer') || '')) ||
-                    ''
-                  ).toLowerCase();
-
+                    (node.getAttribute && (node.getAttribute('data-tab') || node.getAttribute('data-peer') || '')) || ''
+                  ).trim().toLowerCase();
                   var isExactMoreLabel = text === 'ещё' || text === 'еще' || text === 'more';
-                  var isMoreIcon = !!iconNode;
-                  var isMoreTab = dataTab === 'more';
-                  if (isExactMoreLabel || isMoreIcon || isMoreTab) {
-                    hideNode(node.closest('.btn-menu-item,.menu-item,.row,button,div') || node);
+                  var isMoreAria = ariaLabel === 'more' || ariaLabel === 'ещё' || ariaLabel === 'еще';
+                  if (isExactMoreLabel || isMoreAria || dataTab === 'more' || !!iconNode) {
+                    markHidden(node.closest('.btn-menu-item,.menu-item,.row,button,[role=\"menuitem\"]') || node);
                   }
                 });
               };
@@ -2445,8 +2492,6 @@ class MainActivity : ComponentActivity() {
 
                 var row = document.createElement('div');
                 row.className = 'row no-subtitle row-with-icon row-with-padding tgweb-author-channel-row';
-                row.style.background = 'linear-gradient(90deg, rgba(51,144,236,.22), rgba(96,191,255,.18))';
-                row.style.borderRadius = '12px';
 
                 var icon = document.createElement('span');
                 icon.className = 'row-icon';
