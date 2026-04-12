@@ -80,20 +80,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY2'
-from pathlib import Path
-log_path = Path('.github-ci-logs/gradle-build.log')
-if not log_path.exists():
-    raise SystemExit(0)
-content = log_path.read_text(errors='replace')
-lines = content.splitlines()
-tail = '
-'.join(lines[-220:])
-message = tail[-60000:]
-message = message.replace('%', '%25').replace('', '%0D').replace('
-', '%0A')
-print(f"::error title=Gradle failure tail::{message}")
-PY2
+          if [ -f .github-ci-logs/gradle-build.log ]; then
+            python3 -c "from pathlib import Path; lines=Path('.github-ci-logs/gradle-build.log').read_text(errors='replace').splitlines(); tail='\n'.join(lines[-220:])[-60000:]; tail=tail.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); print(f'::error title=Gradle failure tail::{tail}')"
+          fi
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
